@@ -1,5 +1,5 @@
-import { Hono } from "hono";
-import { initDB, query, get, run } from "./db";
+import { createApp } from "@clawnify/app";
+import { query, get, run } from "./db";
 import { initCredentials, executeTool } from "./credentials";
 import type { CredentialServiceBinding } from "./credentials";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
@@ -241,10 +241,14 @@ async function syncChannelProfile(id: number): Promise<any | null> {
   return get<any>("SELECT * FROM channels WHERE id = ?", [id]);
 }
 
-const app = new Hono<Env>();
+const app = createApp<Env>({
+  title: "Open Post",
+  version: "1.0.0",
+  description:
+    "Social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics.",
+});
 
 app.use("*", async (c, next) => {
-  initDB(c.env);
   initUploads(c.env.UPLOADS);
   initCredentials({
     env: c.env as unknown as Record<string, string>,
