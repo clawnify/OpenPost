@@ -242,7 +242,7 @@ async function syncChannelProfile(id: number): Promise<any | null> {
 }
 
 const app = createApp<Env>({
-  title: "Open Post",
+  title: "OpenPost",
   version: "1.0.0",
   description:
     "Social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics.",

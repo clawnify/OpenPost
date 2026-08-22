@@ -1,6 +1,6 @@
 {
   "$schema": "https://app.clawnify.com/schema/v1/clawnify.json",
-  "name": "Open Post",
+  "name": "OpenPost",
   "description": "Social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics. An open alternative to Buffer and Hypefury.",
   "icon": "icon.svg",
   "app": {

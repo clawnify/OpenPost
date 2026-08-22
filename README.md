@@ -1,4 +1,4 @@
-# Open Post: The Open-Source Buffer & Hypefury Alternative
+# OpenPost: The Open-Source Buffer & Hypefury Alternative
 
 [![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/open-post)
 
