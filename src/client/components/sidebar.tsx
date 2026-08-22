@@ -24,7 +24,7 @@ export function Sidebar({ currentView, navigate }: Props) {
         onClick={() => navigate("/")}
       >
         <Radio size={20} class="text-primary" />
-        <span class="font-semibold text-base">Open Post</span>
+        <span class="font-semibold text-base">OpenPost</span>
       </div>
 
       <nav class="flex-1 px-2 py-2 space-y-0.5">
