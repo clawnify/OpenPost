@@ -1,6 +1,6 @@
 # OpenPost: The Open-Source Buffer & Hypefury Alternative
 
-[![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/open-post)
+[![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/OpenPost)
 
 A social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics. Built with **Preact + Tailwind CSS + Hono + D1**. Deploys to Cloudflare Workers via [Clawnify](https://clawnify.com).
 
@@ -36,7 +36,7 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 ## Quickstart
 
 ```bash
-git clone https://github.com/clawnify/open-post.git
+git clone https://github.com/clawnify/OpenPost.git
 cd open-post
 pnpm install
 ```
