@@ -3,11 +3,12 @@ import { PLATFORM_LABELS } from "../../types";
 import { LinkedInPreview } from "./linkedin-preview";
 import { XPreview } from "./x-preview";
 import { InstagramPreview } from "./instagram-preview";
+import { TikTokPreview } from "./tiktok-preview";
 import { GenericPreview } from "./generic-preview";
 
 // Platforms with a native-looking preview card. Others fall back to the generic
 // text+attachments preview.
-const NATIVE_PREVIEW_PLATFORMS = new Set(["linkedin", "twitter", "instagram"]);
+const NATIVE_PREVIEW_PLATFORMS = new Set(["linkedin", "twitter", "instagram", "tiktok"]);
 
 export function hasNativePreview(platform: string): boolean {
   return NATIVE_PREVIEW_PLATFORMS.has(platform);
@@ -49,6 +50,16 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
     case "instagram":
       return (
         <InstagramPreview
+          username={channel.profile_handle || channel.handle || channel.name}
+          avatarUrl={channel.profile_avatar_url || undefined}
+          content={content}
+          imageUrl={imageUrl}
+          timeLabel={timeLabel}
+        />
+      );
+    case "tiktok":
+      return (
+        <TikTokPreview
           username={channel.profile_handle || channel.handle || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}

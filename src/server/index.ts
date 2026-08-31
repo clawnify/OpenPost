@@ -138,6 +138,33 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       const ref = (pub?.data as { id?: string } | null)?.id;
       return { ...base, success: !!pub?.successful, error: pub?.successful ? undefined : (pub?.error || "Instagram publish failed"), ref };
     }
+    case "tiktok": {
+      // Composio execute, single-step photo post (TikTok Content Posting API).
+      // Image-only for now, matching this app's photo-first media model.
+      if (!imageUrl) return { ...base, success: false, error: "TikTok requires an image." };
+      const r = await executeTool("tiktok", "TIKTOK_POST_PHOTO", {
+        post_mode: "DIRECT_POST",
+        photo_images: [imageUrl],
+        photo_cover_index: 0,
+        title: content.slice(0, 90),
+        description: content,
+        privacy_level: "PUBLIC_TO_EVERYONE",
+      });
+      if (!r) return { ...base, success: false, error: "No TikTok credentials. Connect TikTok in Clawnify." };
+      const d = (r.data as any)?.data || (r.data as any) || {};
+      const ref = d.publish_id as string | undefined;
+      // TikTok rejects PUBLIC_TO_EVERYONE (rather than silently downgrading
+      // it) from apps TikTok hasn't audited yet, and from personal accounts
+      // that haven't unlocked public posting — both surface as one of these
+      // literal error codes. Relabel them instead of guessing a "safe" privacy
+      // level up front, which would post successfully but invisibly to
+      // everyone (Postiz's tiktok.provider.ts does the same relabeling).
+      const raw = String(r.error || JSON.stringify(r.data || {}));
+      const friendly = /unaudited_client_can_only_post_to_private_accounts|privacy_level_option_mismatch/.test(raw)
+        ? "TikTok hasn't approved this account for public posts (app audit or account type). Contact support, or set this account to allow public posting in the TikTok app."
+        : r.error || "TikTok post failed";
+      return { ...base, success: !!r.successful, error: r.successful ? undefined : friendly, ref };
+    }
     default:
       return { ...base, success: false, error: `Publishing to ${channel.platform} not yet supported` };
   }
@@ -215,6 +242,19 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
           profile_handle: d.username || null,
           profile_avatar_url: d.profile_picture_url || null,
           profile_headline: d.biography || null,
+        };
+      }
+      case "tiktok": {
+        const r = await executeTool("tiktok", "TIKTOK_GET_USER_STATS", {
+          fields: ["display_name", "avatar_url", "username", "bio_description"],
+        });
+        if (!r?.successful) return null;
+        const d = (r.data as any)?.data?.user || (r.data as any)?.user || (r.data as any) || {};
+        return {
+          profile_name: d.display_name || null,
+          profile_handle: d.username || null,
+          profile_avatar_url: d.avatar_url || null,
+          profile_headline: d.bio_description || null,
         };
       }
       default:
