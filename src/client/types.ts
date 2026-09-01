@@ -5,6 +5,20 @@ export type PostStatus = "draft" | "scheduled" | "published" | "partial" | "fail
 export type DeliveryStatus = "pending" | "published" | "failed";
 export type Platform = "twitter" | "linkedin" | "instagram" | "facebook" | "bluesky" | "mastodon" | "threads" | "tiktok";
 
+// The platforms the server can actually publish to — the single source the
+// channel picker offers. It MUST track the cases in publishToChannel()
+// (src/server/index.ts): a platform here with no server case would let a user
+// schedule posts that only fail at send time (the facebook/mastodon/threads
+// trap this list closes); a server case missing here is simply not offered.
+// facebook/mastodon/threads stay out until they have a publish path.
+export const PUBLISHABLE_PLATFORMS: Platform[] = [
+  "twitter",
+  "linkedin",
+  "instagram",
+  "tiktok",
+  "bluesky",
+];
+
 export const PLATFORM_LIMITS: Record<Platform, number> = {
   twitter: 280,
   linkedin: 3000,

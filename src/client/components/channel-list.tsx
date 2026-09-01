@@ -1,10 +1,12 @@
 import { useState } from "preact/hooks";
 import { Plus, Trash2, Edit2, Check, X, RefreshCw } from "lucide-preact";
 import { useApp } from "../context";
-import { PLATFORM_LABELS, PLATFORM_COLORS } from "../types";
+import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS } from "../types";
 import type { Platform } from "../types";
 
-const PLATFORMS: Platform[] = ["twitter", "linkedin", "instagram", "facebook", "bluesky", "mastodon", "threads", "tiktok"];
+// Only offer platforms the server can publish to (see PUBLISHABLE_PLATFORMS) —
+// a channel the composer can't actually deliver to is a trap, not a feature.
+const PLATFORMS: Platform[] = PUBLISHABLE_PLATFORMS;
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
