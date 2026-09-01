@@ -1,7 +1,8 @@
 import { createApp } from "@clawnify/app";
 import { query, get, run } from "./db";
-import { initCredentials, executeTool } from "./credentials";
+import { initCredentials, executeTool, getCredentials } from "./credentials";
 import type { CredentialServiceBinding } from "./credentials";
+import { publishToBluesky, blueskyProfile, type BlueskyCreds } from "./bluesky";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
 import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./uploads";
 
@@ -165,9 +166,33 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
         : r.error || "TikTok post failed";
       return { ...base, success: !!r.successful, error: r.successful ? undefined : friendly, ref };
     }
+    case "bluesky": {
+      // Own-tier (AT Protocol app password), not Composio: the three-field
+      // credential comes from the broker via getCredentials, and posting is a
+      // raw XRPC call (see bluesky.ts). Handle + PDS host live on the vaulted
+      // credential, so there is one Bluesky account per org — same as the
+      // OAuth channels above.
+      const creds = await resolveBlueskyCreds();
+      if (!creds) return { ...base, success: false, error: "No Bluesky credentials. Connect Bluesky in Clawnify." };
+      const r = await publishToBluesky(creds, content, imageUrl);
+      return { ...base, success: r.success, error: r.error, ref: r.ref, url: r.url };
+    }
     default:
+      // Backstop for a channel whose platform has no case above (a legacy row,
+      // a hand-edited DB). The picker only offers PUBLISHABLE_PLATFORMS
+      // (src/client/types.ts), which must match the cases here — keep the two
+      // in sync when adding a platform.
       return { ...base, success: false, error: `Publishing to ${channel.platform} not yet supported` };
   }
+}
+
+// Resolve the org's Bluesky connection into the three fields createSession
+// needs. Returns null off-platform (no broker) or when Bluesky isn't connected
+// / is missing a field — the caller turns that into a per-channel failure.
+async function resolveBlueskyCreds(): Promise<BlueskyCreds | null> {
+  const c = await getCredentials("bluesky");
+  if (!c?.service || !c?.identifier || !c?.password) return null;
+  return { service: c.service, identifier: c.identifier, password: c.password };
 }
 
 // Reconcile a post's queue job with its current schedule. Enqueues a delivery
@@ -256,6 +281,11 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
           profile_avatar_url: d.avatar_url || null,
           profile_headline: d.bio_description || null,
         };
+      }
+      case "bluesky": {
+        const creds = await resolveBlueskyCreds();
+        if (!creds) return null;
+        return blueskyProfile(creds);
       }
       default:
         return null;
