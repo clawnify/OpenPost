@@ -25,8 +25,11 @@ export function ChannelList() {
   const [platform, setPlatform] = useState<Platform>("twitter");
   const [handle, setHandle] = useState("");
   const [color, setColor] = useState("#1da1f2");
-  // Facebook publishes as a Page, so `handle` holds the Page ID. Offer the
-  // connected account's Pages as a picker; null = not loaded yet.
+  // Platform-side account the channel publishes as (Facebook Page ID). Instagram
+  // resolves its own from the connection, so only Facebook edits this here.
+  const [accountId, setAccountId] = useState("");
+  // Facebook publishes as a Page: offer the connected account's Pages as a
+  // picker; null = not loaded yet.
   const [fbPages, setFbPages] = useState<FacebookPage[] | null>(null);
   const [fbConnected, setFbConnected] = useState(true);
 
@@ -42,29 +45,32 @@ export function ChannelList() {
 
   const pickFacebookPage = (id: string) => {
     const page = fbPages?.find((p) => p.id === id);
-    setHandle(id);
+    setAccountId(id);
     // Prefill the channel name from the Page unless the user typed their own.
-    const prevPage = fbPages?.find((p) => p.id === handle);
+    const prevPage = fbPages?.find((p) => p.id === accountId);
     if (page && (!name.trim() || name === prevPage?.name)) setName(page.name);
   };
 
-  const needsPage = platform === "facebook" && !handle.trim();
+  const needsPage = platform === "facebook" && !accountId.trim();
 
   const resetForm = () => {
-    setName(""); setPlatform("twitter"); setHandle("");
+    setName(""); setPlatform("twitter"); setHandle(""); setAccountId("");
     setColor("#1da1f2");
     setShowForm(false); setEditingId(null);
   };
 
   const startEdit = (ch: any) => {
     setEditingId(ch.id); setName(ch.name); setPlatform(ch.platform);
-    setHandle(ch.handle); setColor(ch.color);
+    setHandle(ch.handle); setColor(ch.color); setAccountId(ch.platform_account_id || "");
     setShowForm(true);
   };
 
   const handleSave = async () => {
     if (!name.trim()) return;
-    const data = { name: name.trim(), platform, handle: handle.trim(), color };
+    const data = {
+      name: name.trim(), platform, handle: handle.trim(), color,
+      platform_account_id: platform === "facebook" ? accountId.trim() || null : null,
+    };
     if (editingId) {
       await updateChannel(editingId, data);
     } else {
@@ -121,7 +127,7 @@ export function ChannelList() {
                 {fbPages && fbPages.length > 0 ? (
                   <select
                     class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    value={handle}
+                    value={accountId}
                     onChange={(e) => pickFacebookPage((e.target as HTMLSelectElement).value)}
                   >
                     <option value="">Choose a Page…</option>
@@ -135,8 +141,8 @@ export function ChannelList() {
                   <>
                     <input
                       class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                      value={handle}
-                      onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
+                      value={accountId}
+                      onInput={(e) => setAccountId((e.target as HTMLInputElement).value)}
                       placeholder="Facebook Page ID"
                     />
                     <p class="text-xs text-muted-foreground mt-1.5">
@@ -158,6 +164,11 @@ export function ChannelList() {
                   onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
                   placeholder="@username"
                 />
+                {platform === "instagram" && (
+                  <p class="text-xs text-muted-foreground mt-1.5">
+                    The Business account is picked up from the Instagram connection in Clawnify.
+                  </p>
+                )}
               </div>
             )}
             <div>

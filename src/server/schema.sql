@@ -5,6 +5,11 @@ CREATE TABLE IF NOT EXISTS channels (
   platform TEXT NOT NULL DEFAULT 'twitter',
   handle TEXT DEFAULT '',
   color TEXT NOT NULL DEFAULT '#1da1f2',
+  -- The platform-side account this channel publishes as, where the connection
+  -- alone doesn't pin one down: the Facebook Page ID (one connection manages
+  -- many Pages) or the Instagram Business Account ID (resolved from the
+  -- connected account). NULL for platforms that publish as the connection.
+  platform_account_id TEXT,
   -- Cached platform profile, synced from the connected account via Composio,
   -- so previews render the real name / photo / @handle / headline.
   profile_name TEXT,

@@ -27,7 +27,7 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 |----------|----------------|------------|
 | X / Twitter | 280 | text |
 | LinkedIn | 3,000 | text |
-| Instagram | 2,200 | photo + caption (Business account) |
+| Instagram | 2,200 | photo + caption (Business or Creator account, picked up from the connection) |
 | Facebook | 63,206 | text or photo, as a Page you manage |
 | TikTok | 2,200 | photo post |
 | Bluesky | 300 | text, with an image and link cards |
@@ -108,6 +108,8 @@ src/
 | POST | `/api/channels` | Create channel |
 | PUT | `/api/channels/:id` | Update channel |
 | DELETE | `/api/channels/:id` | Delete channel |
+| POST | `/api/channels/:id/sync-profile` | Re-pull the channel's platform profile |
+| GET | `/api/platforms/facebook/pages` | Pages the connected Facebook account manages (for the channel form) |
 | GET | `/api/labels` | List labels |
 | POST | `/api/labels` | Create label |
 | PUT | `/api/labels/:id` | Update label |
