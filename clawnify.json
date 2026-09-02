@@ -7,7 +7,7 @@
     "framework": "preact+hono",
     "database": true,
     "storage": true,
-    "credentials": ["twitter", "linkedin", "instagram", "tiktok", "bluesky"]
+    "credentials": ["twitter", "linkedin", "instagram", "facebook", "tiktok", "bluesky"]
   },
   "api": {
     "public_routes": [

@@ -14,24 +14,27 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 - **Drafts** -- save unfinished posts and come back to them later
 - **Channel management** -- add your social media accounts with platform detection and color coding
 - **Labels** -- categorize posts with colored labels for organization
-- **Media attachments** -- add image URLs to posts
+- **Media attachments** -- upload images to posts
 - **Analytics** -- bar charts showing posts per channel, per label, and daily activity
 - **Dashboard** -- at-a-glance stats, upcoming posts, and recent drafts
-- **Twitter/X publishing** -- publish directly to X via Clawnify credential service binding
+- **Native previews** -- see the post as it will look on each selected platform before it goes out
+- **Direct publishing** -- publish to X, LinkedIn, Instagram, Facebook Pages, TikTok and Bluesky through the accounts connected in Clawnify
 - **URL routing** -- bookmarkable pages (`/compose`, `/calendar`, `/queue`, `/drafts`, `/channels`, `/analytics`)
 
 ### Supported Platforms
 
 | Platform | Character Limit | Publishing |
 |----------|----------------|------------|
-| X / Twitter | 280 | via Clawnify credentials |
-| LinkedIn | 3,000 | coming soon |
-| Instagram | 2,200 | coming soon |
-| Facebook | 63,206 | coming soon |
-| Bluesky | 300 | coming soon |
+| X / Twitter | 280 | text |
+| LinkedIn | 3,000 | text |
+| Instagram | 2,200 | photo + caption (Business account) |
+| Facebook | 63,206 | text or photo, as a Page you manage |
+| TikTok | 2,200 | photo post |
+| Bluesky | 300 | text, with an image and link cards |
 | Mastodon | 500 | coming soon |
 | Threads | 500 | coming soon |
-| TikTok | 2,200 | coming soon |
+
+Connect each account once in Clawnify (Settings → Integrations), then add it as a channel here. Facebook channels are Pages: the channel form lists the Pages the connected account manages so you can pick one.
 
 ## Quickstart
 
@@ -49,18 +52,9 @@ pnpm dev
 
 Open `http://localhost:5173` in your browser. The database schema is applied automatically on startup.
 
-### Local Twitter/X Publishing
+### Publishing
 
-For local dev, create a `.dev.vars` file with OAuth 1.0a keys from the [X Developer Portal](https://developer.x.com):
-
-```
-TWITTER_CONSUMER_KEY=your-api-key
-TWITTER_CONSUMER_SECRET=your-api-secret
-TWITTER_ACCESS_TOKEN=your-access-token
-TWITTER_ACCESS_TOKEN_SECRET=your-access-token-secret
-```
-
-In production (deployed via Clawnify), credentials are managed automatically through Clawnify's credential service binding -- no API keys needed in the app.
+Publishing runs through the accounts connected in Clawnify -- no API keys in the app. Locally there is no credential service, so posts save and schedule but publishing reports each channel as not connected.
 
 ## Tech Stack
 
