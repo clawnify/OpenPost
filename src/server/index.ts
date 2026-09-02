@@ -1,7 +1,7 @@
 import { createApp } from "@clawnify/app";
 import { query, get, run } from "./db";
 import { initCredentials, executeTool, getCredentials, stageFile } from "./credentials";
-import type { CredentialServiceBinding, FileDescriptor } from "./credentials";
+import type { CredentialServiceBinding, StagedFile } from "./credentials";
 import { publishToBluesky, blueskyProfile, type BlueskyCreds } from "./bluesky";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
 import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./uploads";
@@ -116,9 +116,9 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       if (!me?.successful) return { ...base, success: false, error: me?.error || "LinkedIn not connected" };
       const id = (me.data as { id?: string } | null)?.id;
       if (!id) return { ...base, success: false, error: "could not resolve LinkedIn member id" };
-      // LinkedIn's action uploads the image itself, but only from a staged
-      // descriptor — a URL in `images` is not a shape it accepts.
-      let images: FileDescriptor[] | undefined;
+      // LinkedIn's action uploads the image itself, but only from a file
+      // staged through the broker — a URL in `images` is not a shape it takes.
+      let images: StagedFile[] | undefined;
       if (imageUrl) {
         const staged = await stageFile("linkedin", "LINKEDIN_CREATE_LINKED_IN_POST", imageUrl);
         // No staging available at all: off-platform, or a runtime older than
@@ -242,9 +242,10 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
 // Stage an image with the broker, then turn it into an X media id.
 //
 // X's own upload endpoint isn't in Composio's Twitter catalogue as a URL call:
-// TWITTER_UPLOAD_MEDIA takes the staged `{ name, mimetype, s3key }` descriptor,
-// and returns a media id that expires in minutes — so this runs immediately
-// before the post, never ahead of a schedule.
+// TWITTER_UPLOAD_MEDIA takes a file staged through the broker,
+// and returns a media id good for 24h (X returns expires_after_secs: 86400).
+// Longer than a publish, shorter than a schedule — so this runs at publish
+// time, not when the post is queued.
 //
 // A failure here fails the whole channel rather than posting text-only. Sending
 // the user's post without the image they attached, silently, is the bug this

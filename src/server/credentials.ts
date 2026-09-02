@@ -37,16 +37,15 @@ export interface CredentialServiceBinding {
     service: string,
     toolSlug: string,
     file: { url: string; filename?: string; mimetype?: string },
-  ): Promise<{ descriptor: FileDescriptor; error: null } | { descriptor: null; error: string }>;
+  ): Promise<{ descriptor: StagedFile; error: null } | { descriptor: null; error: string }>;
 }
 
-// A file staged with the broker, in the shape Composio's file parameters take
-// (Twitter's `media`, LinkedIn's `images`).
-export interface FileDescriptor {
-  name: string;
-  mimetype: string;
-  s3key: string;
-}
+// A file staged with the broker, ready to be a tool argument.
+//
+// Opaque on purpose: the concrete shape belongs to whichever maintainer staged
+// it, and the broker is meant to stay swappable. The only correct use is to
+// pass the whole value through as the argument — never to read a field off it.
+export type StagedFile = Record<string, string>;
 
 // ── State ──
 
@@ -103,11 +102,10 @@ export async function getCredentials(
 
 // ── Staged files ──
 //
-// Composio's file parameters (`file_uploadable` in the tool schema — Twitter's
-// `media`, LinkedIn's `images`) don't take a URL: they take a
-// `{ name, mimetype, s3key }` descriptor pointing at a file already staged in
-// Composio's bucket. Staging needs the platform's Composio key, which no
-// deployed app holds, so the broker does it and hands back the descriptor.
+// The broker's file parameters (Twitter's `media`, LinkedIn's `images`) don't
+// take a URL: they take a handle to a file already staged with the broker.
+// Staging needs a platform credential no deployed app holds, so the broker
+// does it and hands back an opaque handle to forward as the tool argument.
 //
 // Null off-platform (no binding) or against an older broker with no stageFile,
 // mirroring executeTool — the caller turns that into the same "not connected"
@@ -117,7 +115,7 @@ export async function stageFile(
   service: string,
   toolSlug: string,
   url: string,
-): Promise<{ descriptor: FileDescriptor; error: null } | { descriptor: null; error: string } | null> {
+): Promise<{ descriptor: StagedFile; error: null } | { descriptor: null; error: string } | null> {
   if (!_credentialService?.stageFile) return null;
   return _credentialService.stageFile(service, toolSlug, { url });
 }
