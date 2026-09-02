@@ -66,6 +66,9 @@ export interface Channel {
   platform: Platform;
   handle: string;
   color: string;
+  // Platform-side account the channel publishes as (Facebook Page ID,
+  // Instagram Business Account ID); null where the connection is the account.
+  platform_account_id?: string | null;
   created_at: string;
   // Cached platform profile (synced from the connected account) for accurate
   // previews — real name, photo, @handle, headline.

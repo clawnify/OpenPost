@@ -118,10 +118,10 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
     case "instagram": {
       // Composio execute, two-step: create media container → publish it.
       // IG requires a Business account, an image, and the IG Business Account
-      // ID (stored in channel.handle).
+      // ID (resolved from the connection, see resolveInstagramAccountId).
       if (!imageUrl) return { ...base, success: false, error: "Instagram requires an image." };
-      const igUserId = channel.handle as string | undefined;
-      if (!igUserId) return { ...base, success: false, error: "Instagram channel missing Business Account ID (handle)." };
+      const igUserId = await resolveInstagramAccountId(channel);
+      if (!igUserId) return { ...base, success: false, error: "No Instagram credentials. Connect Instagram in Clawnify." };
       const container = await executeTool("instagram", "INSTAGRAM_CREATE_MEDIA_CONTAINER", {
         ig_user_id: igUserId,
         image_url: imageUrl,
@@ -169,10 +169,10 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
     case "facebook": {
       // Composio execute against the Graph API. Facebook only lets apps publish
       // as a Page (the personal feed is closed), so the channel carries the
-      // Page ID in `handle` — picked from the connected account's Pages on the
-      // channel form. Photo posts go through /photos, text-only through /feed
-      // (Postiz's facebook.provider.ts splits the same way).
-      const pageId = channel.handle as string | undefined;
+      // Page ID in platform_account_id — picked from the connected account's
+      // Pages on the channel form. Photo posts go through /photos, text-only
+      // through /feed (Postiz's facebook.provider.ts splits the same way).
+      const pageId = accountId(channel);
       if (!pageId) return { ...base, success: false, error: "Facebook channel has no Page selected." };
       const r = imageUrl
         ? await executeTool("facebook", "FACEBOOK_CREATE_PHOTO_POST", {
@@ -213,6 +213,30 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       // in sync when adding a platform.
       return { ...base, success: false, error: `Publishing to ${channel.platform} not yet supported` };
   }
+}
+
+// The platform-side account a channel publishes as (Facebook Page ID,
+// Instagram Business Account ID). Rows from before platform_account_id existed
+// kept that id in `handle`, so a purely numeric handle still counts.
+function accountId(channel: any): string | undefined {
+  const stored = channel.platform_account_id as string | null | undefined;
+  if (stored) return stored;
+  const legacy = String(channel.handle || "").trim();
+  return /^\d+$/.test(legacy) ? legacy : undefined;
+}
+
+// Instagram Business Account ID for a channel: the stored one, else ask the
+// connected account for itself (INSTAGRAM_GET_USER_INFO with no id returns
+// the current user) and persist it. Null off-platform or when Instagram isn't
+// connected — the caller turns that into a per-channel failure.
+async function resolveInstagramAccountId(channel: any): Promise<string | null> {
+  const stored = accountId(channel);
+  if (stored) return stored;
+  const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", {});
+  const id = r?.successful ? ((r.data as any)?.id as string | undefined) : undefined;
+  if (!id) return null;
+  await run("UPDATE channels SET platform_account_id = ? WHERE id = ?", [id, channel.id]);
+  return id;
 }
 
 // Permalink for a Graph API post id. Composite ids ("<page>_<post>") map to
@@ -293,7 +317,7 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
         };
       }
       case "instagram": {
-        const igUserId = channel.handle; // IG Business Account ID
+        const igUserId = await resolveInstagramAccountId(channel);
         if (!igUserId) return null;
         const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", { ig_user_id: igUserId });
         if (!r?.successful) return null;
@@ -319,7 +343,7 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
         };
       }
       case "facebook": {
-        const pageId = channel.handle; // Facebook Page ID
+        const pageId = accountId(channel);
         if (!pageId) return null;
         const r = await executeTool("facebook", "FACEBOOK_GET_PAGE_DETAILS", {
           page_id: pageId,
@@ -436,13 +460,13 @@ app.get("/api/channels", async (c) => {
 });
 
 app.post("/api/channels", async (c) => {
-  const { name, platform, handle, color } = await c.req.json<{
-    name: string; platform?: string; handle?: string; color?: string;
+  const { name, platform, handle, color, platform_account_id } = await c.req.json<{
+    name: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null;
   }>();
   if (!name?.trim()) return c.json({ error: "Name required" }, 400);
   const result = await run(
-    "INSERT INTO channels (name, platform, handle, color) VALUES (?, ?, ?, ?)",
-    [name.trim(), platform || "twitter", handle || "", color || "#1da1f2"]
+    "INSERT INTO channels (name, platform, handle, color, platform_account_id) VALUES (?, ?, ?, ?, ?)",
+    [name.trim(), platform || "twitter", handle || "", color || "#1da1f2", platform_account_id?.trim() || null]
   );
   const id = Number(result.lastInsertRowid);
   // Pull the real platform profile so previews are accurate from the start.
@@ -462,18 +486,26 @@ app.post("/api/channels/:id/sync-profile", async (c) => {
 
 app.put("/api/channels/:id", async (c) => {
   const id = Number(c.req.param("id"));
-  const { name, platform, handle, color } = await c.req.json<{
-    name?: string; platform?: string; handle?: string; color?: string;
+  const { name, platform, handle, color, platform_account_id } = await c.req.json<{
+    name?: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null;
   }>();
-  const existing = await get("SELECT * FROM channels WHERE id = ?", [id]);
+  const existing = await get<any>("SELECT * FROM channels WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
+  const nextPlatform = platform ?? existing.platform;
+  // An account id belongs to one platform: drop it when the platform changes
+  // unless the request supplies a new one.
+  const nextAccountId =
+    platform_account_id !== undefined
+      ? platform_account_id?.trim() || null
+      : nextPlatform === existing.platform ? existing.platform_account_id : null;
   await run(
-    "UPDATE channels SET name = ?, platform = ?, handle = ?, color = ? WHERE id = ?",
+    "UPDATE channels SET name = ?, platform = ?, handle = ?, color = ?, platform_account_id = ? WHERE id = ?",
     [
-      name ?? (existing as any).name,
-      platform ?? (existing as any).platform,
-      handle ?? (existing as any).handle,
-      color ?? (existing as any).color,
+      name ?? existing.name,
+      nextPlatform,
+      handle ?? existing.handle,
+      color ?? existing.color,
+      nextAccountId,
       id,
     ]
   );
