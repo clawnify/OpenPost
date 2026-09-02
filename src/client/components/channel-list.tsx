@@ -1,8 +1,9 @@
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import { Plus, Trash2, Edit2, Check, X, RefreshCw } from "lucide-preact";
 import { useApp } from "../context";
+import { api } from "../api";
 import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS } from "../types";
-import type { Platform } from "../types";
+import type { Platform, FacebookPage } from "../types";
 
 // Only offer platforms the server can publish to (see PUBLISHABLE_PLATFORMS) —
 // a channel the composer can't actually deliver to is a trap, not a feature.
@@ -24,6 +25,30 @@ export function ChannelList() {
   const [platform, setPlatform] = useState<Platform>("twitter");
   const [handle, setHandle] = useState("");
   const [color, setColor] = useState("#1da1f2");
+  // Facebook publishes as a Page, so `handle` holds the Page ID. Offer the
+  // connected account's Pages as a picker; null = not loaded yet.
+  const [fbPages, setFbPages] = useState<FacebookPage[] | null>(null);
+  const [fbConnected, setFbConnected] = useState(true);
+
+  useEffect(() => {
+    if (platform !== "facebook" || !showForm) return;
+    let cancelled = false;
+    setFbPages(null);
+    api<{ connected: boolean; pages: FacebookPage[] }>("GET", "/api/platforms/facebook/pages")
+      .then((r) => { if (!cancelled) { setFbPages(r.pages); setFbConnected(r.connected); } })
+      .catch(() => { if (!cancelled) { setFbPages([]); setFbConnected(true); } });
+    return () => { cancelled = true; };
+  }, [platform, showForm]);
+
+  const pickFacebookPage = (id: string) => {
+    const page = fbPages?.find((p) => p.id === id);
+    setHandle(id);
+    // Prefill the channel name from the Page unless the user typed their own.
+    const prevPage = fbPages?.find((p) => p.id === handle);
+    if (page && (!name.trim() || name === prevPage?.name)) setName(page.name);
+  };
+
+  const needsPage = platform === "facebook" && !handle.trim();
 
   const resetForm = () => {
     setName(""); setPlatform("twitter"); setHandle("");
@@ -90,15 +115,51 @@ export function ChannelList() {
                 ))}
               </select>
             </div>
-            <div>
-              <label class="block text-xs font-medium text-muted-foreground mb-1.5">Handle</label>
-              <input
-                class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                value={handle}
-                onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
-                placeholder="@username"
-              />
-            </div>
+            {platform === "facebook" ? (
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Page</label>
+                {fbPages && fbPages.length > 0 ? (
+                  <select
+                    class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    value={handle}
+                    onChange={(e) => pickFacebookPage((e.target as HTMLSelectElement).value)}
+                  >
+                    <option value="">Choose a Page…</option>
+                    {fbPages.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}{p.username ? ` (@${p.username})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      value={handle}
+                      onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
+                      placeholder="Facebook Page ID"
+                    />
+                    <p class="text-xs text-muted-foreground mt-1.5">
+                      {fbPages === null
+                        ? "Loading your Pages…"
+                        : !fbConnected
+                          ? "Connect Facebook in Clawnify to pick a Page, or enter the Page ID."
+                          : "No Pages found on the connected account. Enter the Page ID."}
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : (
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Handle</label>
+                <input
+                  class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  value={handle}
+                  onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
+                  placeholder="@username"
+                />
+              </div>
+            )}
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Color</label>
               <div class="flex items-center gap-2">
@@ -122,7 +183,7 @@ export function ChannelList() {
             <button
               class="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               onClick={handleSave}
-              disabled={!name.trim()}
+              disabled={!name.trim() || needsPage}
             >
               <Check size={14} /> {editingId ? "Update" : "Create"}
             </button>

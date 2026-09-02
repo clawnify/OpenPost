@@ -166,6 +166,35 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
         : r.error || "TikTok post failed";
       return { ...base, success: !!r.successful, error: r.successful ? undefined : friendly, ref };
     }
+    case "facebook": {
+      // Composio execute against the Graph API. Facebook only lets apps publish
+      // as a Page (the personal feed is closed), so the channel carries the
+      // Page ID in `handle` — picked from the connected account's Pages on the
+      // channel form. Photo posts go through /photos, text-only through /feed
+      // (Postiz's facebook.provider.ts splits the same way).
+      const pageId = channel.handle as string | undefined;
+      if (!pageId) return { ...base, success: false, error: "Facebook channel has no Page selected." };
+      const r = imageUrl
+        ? await executeTool("facebook", "FACEBOOK_CREATE_PHOTO_POST", {
+            page_id: pageId,
+            url: imageUrl,
+            message: content,
+            published: true,
+          })
+        : await executeTool("facebook", "FACEBOOK_CREATE_POST", {
+            page_id: pageId,
+            message: content,
+            published: true,
+          });
+      if (!r) return { ...base, success: false, error: "No Facebook credentials. Connect Facebook in Clawnify." };
+      // Composio wraps the Graph response as data.response_data. /feed returns
+      // { id: "<page>_<post>" }; /photos returns { id: <photo>, post_id:
+      // "<page>_<post>" } — the post id is the one that has a permalink.
+      const d = (((r.data as any)?.response_data ?? r.data) || {}) as { id?: string; post_id?: string };
+      const ref = d.post_id || d.id;
+      const url = ref ? facebookPostUrl(ref) : undefined;
+      return { ...base, success: !!r.successful, error: r.successful ? undefined : (r.error || "Facebook post failed"), ref, url };
+    }
     case "bluesky": {
       // Own-tier (AT Protocol app password), not Composio: the three-field
       // credential comes from the broker via getCredentials, and posting is a
@@ -184,6 +213,13 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       // in sync when adding a platform.
       return { ...base, success: false, error: `Publishing to ${channel.platform} not yet supported` };
   }
+}
+
+// Permalink for a Graph API post id. Composite ids ("<page>_<post>") map to
+// the canonical /<page>/posts/<post> form; anything else resolves at the root.
+function facebookPostUrl(ref: string): string {
+  const [page, post] = ref.split("_");
+  return post ? `https://www.facebook.com/${page}/posts/${post}` : `https://www.facebook.com/${ref}`;
 }
 
 // Resolve the org's Bluesky connection into the three fields createSession
@@ -282,6 +318,22 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
           profile_headline: d.bio_description || null,
         };
       }
+      case "facebook": {
+        const pageId = channel.handle; // Facebook Page ID
+        if (!pageId) return null;
+        const r = await executeTool("facebook", "FACEBOOK_GET_PAGE_DETAILS", {
+          page_id: pageId,
+          fields: "id,name,username,about,picture.type(large)",
+        });
+        if (!r?.successful) return null;
+        const d = ((r.data as any)?.response_data ?? (r.data as any)) || {};
+        return {
+          profile_name: d.name || null,
+          profile_handle: d.username || null,
+          profile_avatar_url: d.picture?.data?.url || null,
+          profile_headline: d.about || null,
+        };
+      }
       case "bluesky": {
         const creds = await resolveBlueskyCreds();
         if (!creds) return null;
@@ -354,6 +406,26 @@ app.get("/api/uploads/:key", async (c) => {
   return new Response(obj.data, {
     headers: { "Content-Type": obj.contentType, "Cache-Control": "public, max-age=31536000" },
   });
+});
+
+// ── Platform helpers ──
+
+// The Pages the connected Facebook account manages, for the channel form's
+// Page picker. `connected: false` with no pages (not an error) off-platform or
+// when Facebook isn't connected, so the form falls back to a manual Page ID.
+// Only id / name / username leave this handler — the Graph response also
+// carries per-Page access tokens, which must never reach the browser.
+app.get("/api/platforms/facebook/pages", async (c) => {
+  const r = await executeTool("facebook", "FACEBOOK_GET_USER_PAGES", { fields: "id,name,username" });
+  if (!r) return c.json({ connected: false, pages: [] });
+  if (!r.successful) return c.json({ error: r.error || "Could not list Facebook Pages" }, 502);
+  const d = ((r.data as any)?.response_data ?? (r.data as any)) || {};
+  const pages = ((d.data ?? []) as Array<{ id: string | number; name?: string; username?: string }>).map((p) => ({
+    id: String(p.id),
+    name: p.name || String(p.id),
+    username: p.username ?? null,
+  }));
+  return c.json({ connected: true, pages });
 });
 
 // ── Channels ──

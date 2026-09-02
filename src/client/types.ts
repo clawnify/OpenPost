@@ -8,16 +8,24 @@ export type Platform = "twitter" | "linkedin" | "instagram" | "facebook" | "blue
 // The platforms the server can actually publish to — the single source the
 // channel picker offers. It MUST track the cases in publishToChannel()
 // (src/server/index.ts): a platform here with no server case would let a user
-// schedule posts that only fail at send time (the facebook/mastodon/threads
-// trap this list closes); a server case missing here is simply not offered.
-// facebook/mastodon/threads stay out until they have a publish path.
+// schedule posts that only fail at send time (the mastodon/threads trap this
+// list closes); a server case missing here is simply not offered.
+// mastodon/threads stay out until they have a publish path.
 export const PUBLISHABLE_PLATFORMS: Platform[] = [
   "twitter",
   "linkedin",
   "instagram",
+  "facebook",
   "tiktok",
   "bluesky",
 ];
+
+// A Facebook Page the connected account manages (GET /api/platforms/facebook/pages).
+export interface FacebookPage {
+  id: string;
+  name: string;
+  username: string | null;
+}
 
 export const PLATFORM_LIMITS: Record<Platform, number> = {
   twitter: 280,
