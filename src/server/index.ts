@@ -1,7 +1,7 @@
 import { createApp } from "@clawnify/app";
 import { query, get, run } from "./db";
-import { initCredentials, executeTool, getCredentials } from "./credentials";
-import type { CredentialServiceBinding } from "./credentials";
+import { initCredentials, executeTool, getCredentials, stageFile } from "./credentials";
+import type { CredentialServiceBinding, StagedFile } from "./credentials";
 import { publishToBluesky, blueskyProfile, type BlueskyCreds } from "./bluesky";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
 import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./uploads";
@@ -92,7 +92,18 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
   switch (channel.platform) {
     case "twitter": {
       // Composio execute (raw tokens are permanently redacted post-incident).
-      const r = await executeTool("twitter", "TWITTER_CREATION_OF_A_POST", { text: content });
+      // An image is a second call first: stage it with the broker, hand the
+      // descriptor to TWITTER_UPLOAD_MEDIA, then attach the media id it mints.
+      let mediaIds: string[] | undefined;
+      if (imageUrl) {
+        const up = await uploadTwitterMedia(imageUrl);
+        if ("error" in up) return { ...base, success: false, error: up.error };
+        mediaIds = [up.mediaId];
+      }
+      const r = await executeTool("twitter", "TWITTER_CREATION_OF_A_POST", {
+        text: content,
+        ...(mediaIds ? { media_media_ids: mediaIds } : {}),
+      });
       if (!r) return { ...base, success: false, error: "No Twitter credentials. Connect Twitter in Clawnify." };
       const ref = (r.data as { data?: { id?: string } } | null)?.data?.id;
       const url = ref ? `https://x.com/i/status/${ref}` : undefined;
@@ -105,11 +116,24 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       if (!me?.successful) return { ...base, success: false, error: me?.error || "LinkedIn not connected" };
       const id = (me.data as { id?: string } | null)?.id;
       if (!id) return { ...base, success: false, error: "could not resolve LinkedIn member id" };
+      // LinkedIn's action uploads the image itself, but only from a file
+      // staged through the broker — a URL in `images` is not a shape it takes.
+      let images: StagedFile[] | undefined;
+      if (imageUrl) {
+        const staged = await stageFile("linkedin", "LINKEDIN_CREATE_LINKED_IN_POST", imageUrl);
+        // No staging available at all: off-platform, or a runtime older than
+        // the broker's stageFile. Either way the image cannot go out, and the
+        // channel fails rather than quietly posting the text on its own.
+        if (!staged) return { ...base, success: false, error: "Couldn't upload the image to LinkedIn. Reconnect LinkedIn in Clawnify." };
+        if (!staged.descriptor) return { ...base, success: false, error: `LinkedIn image upload failed: ${staged.error}` };
+        images = [staged.descriptor];
+      }
       const r = await executeTool("linkedin", "LINKEDIN_CREATE_LINKED_IN_POST", {
         author: `urn:li:person:${id}`,
         commentary: content,
         visibility: "PUBLIC",
         lifecycleState: "PUBLISHED",
+        ...(images ? { images } : {}),
       });
       const ref = (r?.data as { x_restli_id?: string } | null)?.x_restli_id;
       const url = ref ? `https://www.linkedin.com/feed/update/${ref}` : undefined;
@@ -213,6 +237,35 @@ async function publishToChannel(channel: any, content: string, imageUrl?: string
       // in sync when adding a platform.
       return { ...base, success: false, error: `Publishing to ${channel.platform} not yet supported` };
   }
+}
+
+// Stage an image with the broker, then turn it into an X media id.
+//
+// X's own upload endpoint isn't in Composio's Twitter catalogue as a URL call:
+// TWITTER_UPLOAD_MEDIA takes a file staged through the broker,
+// and returns a media id good for 24h (X returns expires_after_secs: 86400).
+// Longer than a publish, shorter than a schedule — so this runs at publish
+// time, not when the post is queued.
+//
+// A failure here fails the whole channel rather than posting text-only. Sending
+// the user's post without the image they attached, silently, is the bug this
+// path exists to close (bluesky.ts takes the same stance on an oversized blob).
+async function uploadTwitterMedia(imageUrl: string): Promise<{ mediaId: string } | { error: string }> {
+  const staged = await stageFile("twitter", "TWITTER_UPLOAD_MEDIA", imageUrl);
+  // No staging available at all: off-platform, or a runtime older than the
+  // broker's stageFile. Don't borrow the "no credentials" wording — that names
+  // a cause this branch hasn't checked.
+  if (!staged) return { error: "Couldn't upload the image to X. Reconnect X in Clawnify." };
+  if (!staged.descriptor) return { error: `X image upload failed: ${staged.error}` };
+
+  const r = await executeTool("twitter", "TWITTER_UPLOAD_MEDIA", {
+    media: staged.descriptor,
+    media_category: "tweet_image",
+  });
+  if (!r) return { error: "No Twitter credentials. Connect Twitter in Clawnify." };
+  const mediaId = (r.data as { data?: { id?: string } } | null)?.data?.id;
+  if (!r.successful || !mediaId) return { error: `X image upload failed: ${r.error || "no media id returned"}` };
+  return { mediaId };
 }
 
 // The platform-side account a channel publishes as (Facebook Page ID,

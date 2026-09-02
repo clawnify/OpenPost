@@ -25,8 +25,8 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 
 | Platform | Character Limit | Publishing |
 |----------|----------------|------------|
-| X / Twitter | 280 | text |
-| LinkedIn | 3,000 | text |
+| X / Twitter | 280 | text or photo |
+| LinkedIn | 3,000 | text or photo |
 | Instagram | 2,200 | photo + caption (Business or Creator account, picked up from the connection) |
 | Facebook | 63,206 | text or photo, as a Page you manage |
 | TikTok | 2,200 | photo post |
