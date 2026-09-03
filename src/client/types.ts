@@ -41,6 +41,10 @@ export interface Channel {
   profile_avatar_url?: string | null;
   profile_headline?: string | null;
   profile_synced_at?: string | null;
+  // This channel's own version of the post text, when the author customized it.
+  // Null/absent means it publishes the post's shared draft. Only populated on
+  // channels nested in a Post.
+  content_override?: string | null;
   // Per-channel delivery state — only populated on channels nested in a Post.
   delivery_status?: DeliveryStatus;
   delivery_ref?: string | null;

@@ -39,10 +39,12 @@ interface PublishResult {
 // since the May 2026 incident, so no raw-token path is usable.
 async function publishPost(id: number): Promise<{ published: boolean; results: PublishResult[] } | null> {
   const post = await get<any>("SELECT * FROM posts WHERE id = ?", [id]);
-  if (!post || !post.content?.trim()) return null;
+  if (!post) return null;
 
+  // channel_content is this channel's own version of the text; NULL means it
+  // inherits the shared draft (posts.content).
   const channels = await query<any>(
-    `SELECT c.* FROM channels c
+    `SELECT c.*, pc.content AS channel_content FROM channels c
      JOIN post_channels pc ON pc.channel_id = c.id
      WHERE pc.post_id = ?`,
     [id],
@@ -53,9 +55,14 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
   // gets a subset.
   const imageUrls = media.map((m: any) => m.url as string).filter(Boolean);
 
+  // A post is publishable when at least one channel has text to send: the
+  // shared draft, or its own override. Overriding every channel and clearing
+  // the shared draft is a legitimate post, not an empty one.
+  if (!channels.some((ch: any) => channelContent(ch, post.content).trim())) return null;
+
   const results: PublishResult[] = [];
   for (const channel of channels) {
-    const r = await publishToChannel(channel, post.content, imageUrls);
+    const r = await publishToChannel(channel, channelContent(channel, post.content), imageUrls);
     // Persist this channel's delivery outcome on its post_channels row.
     await run(
       `UPDATE post_channels
@@ -91,8 +98,22 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
   return { published: delivered > 0, results };
 }
 
+// The text this channel actually publishes: its own version when it has one,
+// otherwise the post's shared draft. The single place the two are resolved, so
+// publishing, previews and the API can never disagree about which text wins.
+function channelContent(channel: any, shared: string | null | undefined): string {
+  const own = channel.channel_content as string | null | undefined;
+  return (own ?? shared ?? "") as string;
+}
+
 async function publishToChannel(channel: any, content: string, imageUrls: string[]): Promise<PublishResult> {
   const base = { channelId: channel.id as number, channel: channel.name as string, platform: channel.platform as string };
+
+  // Only reachable when the shared draft is empty and this channel wasn't
+  // given its own text — the other channels still go out.
+  if (!content.trim()) {
+    return { ...base, success: false, error: "No content for this channel. Write a shared draft, or customize this channel." };
+  }
 
   // More images than this platform accepts fails the channel rather than
   // posting a truncated set. Sending fewer images than the user attached,
@@ -661,11 +682,30 @@ app.delete("/api/labels/:id", async (c) => {
 
 // ── Posts ──
 
+// Write a post's channel rows, carrying each channel's own version of the text
+// where the request supplied one. A blank override is stored as NULL — "no
+// override, inherit the shared draft" — so an emptied box never publishes an
+// empty post.
+async function setPostChannels(
+  postId: number,
+  channelIds: number[],
+  overrides: Record<string, string | null> | undefined,
+): Promise<void> {
+  for (const cid of channelIds) {
+    const own = overrides?.[String(cid)];
+    await run(
+      "INSERT INTO post_channels (post_id, channel_id, content) VALUES (?, ?, ?)",
+      [postId, cid, typeof own === "string" && own.trim() ? own : null],
+    );
+  }
+}
+
 async function enrichPost(post: any) {
   // Include the per-channel delivery state (Postiz-style) so the UI can show
   // each channel's status, link out to the live post, and surface failures.
   const channels = await query(
     `SELECT c.*,
+            pc.content AS content_override,
             pc.status AS delivery_status,
             pc.ref AS delivery_ref,
             pc.url AS delivery_url,
@@ -765,11 +805,14 @@ app.get("/api/posts/:id", async (c) => {
 });
 
 app.post("/api/posts", async (c) => {
-  const { content, status, scheduled_at, channel_ids, label_ids, media_urls } = await c.req.json<{
+  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media_urls } = await c.req.json<{
     content: string;
     status?: string;
     scheduled_at?: string;
     channel_ids?: number[];
+    // Per-channel text overrides, keyed by channel id. Additive: a request that
+    // omits it posts the same shared draft everywhere, exactly as before.
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
     media_urls?: string[];
   }>();
@@ -782,9 +825,7 @@ app.post("/api/posts", async (c) => {
   const postId = result.lastInsertRowid;
 
   if (channel_ids?.length) {
-    for (const cid of channel_ids) {
-      await run("INSERT INTO post_channels (post_id, channel_id) VALUES (?, ?)", [postId, cid]);
-    }
+    await setPostChannels(Number(postId), channel_ids, channel_content);
   }
   if (label_ids?.length) {
     for (const lid of label_ids) {
@@ -808,11 +849,12 @@ app.put("/api/posts/:id", async (c) => {
   const existing = await get("SELECT * FROM posts WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
 
-  const { content, status, scheduled_at, channel_ids, label_ids, media_urls } = await c.req.json<{
+  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media_urls } = await c.req.json<{
     content?: string;
     status?: string;
     scheduled_at?: string | null;
     channel_ids?: number[];
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
     media_urls?: string[];
   }>();
@@ -829,9 +871,7 @@ app.put("/api/posts/:id", async (c) => {
 
   if (channel_ids !== undefined) {
     await run("DELETE FROM post_channels WHERE post_id = ?", [id]);
-    for (const cid of channel_ids) {
-      await run("INSERT INTO post_channels (post_id, channel_id) VALUES (?, ?)", [id, cid]);
-    }
+    await setPostChannels(id, channel_ids, channel_content);
   }
   if (label_ids !== undefined) {
     await run("DELETE FROM post_labels WHERE post_id = ?", [id]);
@@ -878,7 +918,6 @@ app.post("/api/posts/:id/publish", async (c) => {
   const id = Number(c.req.param("id"));
   const post = await get<any>("SELECT * FROM posts WHERE id = ?", [id]);
   if (!post) return c.json({ error: "Post not found" }, 404);
-  if (!post.content?.trim()) return c.json({ error: "Post has no content" }, 400);
 
   const channelCount = await get<{ count: number }>(
     "SELECT COUNT(*) as count FROM post_channels WHERE post_id = ?",
@@ -886,8 +925,10 @@ app.post("/api/posts/:id/publish", async (c) => {
   );
   if (!channelCount?.count) return c.json({ error: "No channels assigned to this post" }, 400);
 
+  // The post exists and has channels, so a null here means no channel had any
+  // text to send — neither the shared draft nor its own version.
   const result = await publishPost(id);
-  if (!result) return c.json({ error: "Post not found or empty" }, 400);
+  if (!result) return c.json({ error: "Post has no content" }, 400);
   return c.json(result);
 });
 
