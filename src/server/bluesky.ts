@@ -128,11 +128,11 @@ async function uploadBlob(
   return { blob: data.blob };
 }
 
-// Publish one post: createSession → (optional) uploadBlob → createRecord.
+// Publish one post: createSession → (optional) uploadBlob per image → createRecord.
 export async function publishToBluesky(
   creds: BlueskyCreds,
   content: string,
-  imageUrl?: string,
+  imageUrls: string[] = [],
 ): Promise<BlueskyResult> {
   const base = trimBase(creds.service);
   const session = await createSession(creds);
@@ -146,13 +146,17 @@ export async function publishToBluesky(
   const facets = detectFacets(content);
   if (facets.length) record.facets = facets;
 
-  if (imageUrl) {
-    const up = await uploadBlob(base, session.accessJwt, imageUrl);
-    if ("error" in up) return { success: false, error: up.error };
-    record.embed = {
-      $type: "app.bsky.embed.images",
-      images: [{ image: up.blob, alt: "" }],
-    };
+  if (imageUrls.length) {
+    // One blob upload per image, in order — the lexicon caps the embed at 4,
+    // which the caller has already checked. A single failed blob fails the
+    // whole post rather than shipping the rest without it.
+    const images: Array<{ image: unknown; alt: string }> = [];
+    for (const url of imageUrls) {
+      const up = await uploadBlob(base, session.accessJwt, url);
+      if ("error" in up) return { success: false, error: up.error };
+      images.push({ image: up.blob, alt: "" });
+    }
+    record.embed = { $type: "app.bsky.embed.images", images };
   }
 
   const res = await fetch(`${base}/xrpc/com.atproto.repo.createRecord`, {
