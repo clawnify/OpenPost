@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { Send, Save, ArrowLeft, Image, X, Upload, Loader2 } from "lucide-preact";
 import { useApp } from "../context";
-import { PLATFORM_LIMITS, PLATFORM_LABELS } from "../types";
+import { PLATFORM_LIMITS, PLATFORM_LABELS, mediaLimitError } from "../types";
 import type { Platform } from "../types";
 import { PostPreview, PreviewChannelTabs } from "./previews";
 
@@ -56,6 +56,21 @@ export function PostComposer({ editId, navigate }: Props) {
   }, [selectedChannels, channels]);
 
   const overLimit = charLimit !== null && content.length > charLimit;
+
+  // Selected channels whose platform can't carry this many images. Publishing
+  // fails those channels rather than posting a truncated set, so say it here —
+  // while the images are still on screen and removable — instead of letting it
+  // surface as a delivery error after the fact.
+  const mediaWarnings = useMemo(() => {
+    const messages = new Set<string>();
+    for (const c of channels) {
+      if (!selectedChannels.includes(c.id)) continue;
+      const msg = mediaLimitError(c.platform, mediaUrls.length);
+      // Two channels on the same platform share one message.
+      if (msg) messages.add(msg);
+    }
+    return [...messages];
+  }, [selectedChannels, channels, mediaUrls.length]);
 
   // Selected channels, in selection order, for the preview switcher.
   const previewChannels = useMemo(
@@ -207,6 +222,13 @@ export function PostComposer({ editId, navigate }: Props) {
                 <Image size={14} /> Add
               </button>
             </div>
+            {mediaWarnings.length > 0 && (
+              <div class="mt-2 space-y-1">
+                {mediaWarnings.map((msg) => (
+                  <p key={msg} class="text-xs text-destructive">{msg}</p>
+                ))}
+              </div>
+            )}
             {mediaUrls.length > 0 && (
               <div class="flex gap-2 mt-3 flex-wrap">
                 {mediaUrls.map((url, i) => (
