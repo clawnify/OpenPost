@@ -750,7 +750,10 @@ async function setPostChannels(
   channelIds: number[],
   overrides: Record<string, string | null> | undefined,
 ): Promise<void> {
-  // Drop only the channels the post no longer has.
+  // Drop only the channels the post no longer has. The NOT IN list binds one
+  // parameter per channel against a 100-parameter ceiling, so this breaks at
+  // 100 channels on a single post — but the serial publish loop above would hit
+  // the request time limit long before that, so it is not the first wall.
   if (channelIds.length) {
     await run(
       `DELETE FROM post_channels
