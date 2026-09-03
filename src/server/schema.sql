@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE TABLE IF NOT EXISTS post_channels (
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  -- This channel's own version of the text. NULL means "use posts.content" —
+  -- the shared draft — so a post nobody customized keeps exactly one body of
+  -- text, and only the channels the user actually tailored carry a row value.
+  -- Empty is never stored: a blank override normalises to NULL (inherit).
+  content TEXT,
   status TEXT NOT NULL DEFAULT 'pending',  -- pending | published | failed
   ref TEXT,            -- platform post id (Postiz: releaseId)
   url TEXT,            -- link to the live post (Postiz: releaseURL)

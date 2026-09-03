@@ -124,6 +124,9 @@ export function useAppState() {
     status?: string;
     scheduled_at?: string;
     channel_ids?: number[];
+    // Per-channel text overrides, keyed by channel id; omitted channels publish
+    // the shared draft.
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
     media_urls?: string[];
   }) => {
@@ -139,6 +142,7 @@ export function useAppState() {
     status?: string;
     scheduled_at?: string | null;
     channel_ids?: number[];
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
     media_urls?: string[];
   }) => {

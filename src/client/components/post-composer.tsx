@@ -3,7 +3,7 @@ import { Send, Save, ArrowLeft, Image, X, Upload, Loader2 } from "lucide-preact"
 import { useApp } from "../context";
 import { PLATFORM_LIMITS, PLATFORM_LABELS, mediaLimitError } from "../types";
 import type { Platform } from "../types";
-import { PostPreview, PreviewChannelTabs } from "./previews";
+import { PostPreview, ChannelTabs } from "./previews";
 
 // Timezone boundary: storage + the queue are always UTC; the browser is the
 // only timezone-aware layer. Convert local <-> UTC only here, at the edges.
@@ -30,6 +30,11 @@ export function PostComposer({ editId, navigate }: Props) {
   const existing = editId ? posts.find((p) => p.id === editId) : null;
 
   const [content, setContent] = useState("");
+  // Channels the author gave their own version of the text. A channel absent
+  // here inherits `content` — the shared draft. Kept keyed by channel id (not
+  // per-tab local state) so toggling a channel off and back on doesn't discard
+  // what was typed for it.
+  const [overrides, setOverrides] = useState<Record<number, string>>({});
   const [selectedChannels, setSelectedChannels] = useState<number[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState("");
@@ -41,6 +46,13 @@ export function PostComposer({ editId, navigate }: Props) {
   useEffect(() => {
     if (existing) {
       setContent(existing.content);
+      setOverrides(
+        Object.fromEntries(
+          existing.channels
+            .filter((c) => c.content_override != null)
+            .map((c) => [c.id, c.content_override as string]),
+        ),
+      );
       setSelectedChannels(existing.channels.map((c) => c.id));
       setSelectedLabels(existing.labels.map((l) => l.id));
       setScheduledAt(existing.scheduled_at ? utcToLocalInput(existing.scheduled_at) : "");
@@ -48,14 +60,40 @@ export function PostComposer({ editId, navigate }: Props) {
     }
   }, [existing?.id]);
 
-  const charLimit = useMemo(() => {
-    if (selectedChannels.length === 0) return null;
-    const selected = channels.filter((c) => selectedChannels.includes(c.id));
-    const limits = selected.map((c) => PLATFORM_LIMITS[c.platform as Platform] || 10000);
-    return Math.min(...limits);
-  }, [selectedChannels, channels]);
+  // Selected channels, in selection order — the tab strip, the preview, and the
+  // limits below all read this one list.
+  const previewChannels = useMemo(
+    () => selectedChannels.map((id) => channels.find((c) => c.id === id)).filter(Boolean) as typeof channels,
+    [selectedChannels, channels],
+  );
 
-  const overLimit = charLimit !== null && content.length > charLimit;
+  // The shared draft only has to fit the channels that still inherit it: give
+  // X its own version and LinkedIn stops being capped at 280 characters.
+  const sharedLimit = useMemo(() => {
+    const inheriting = previewChannels.filter((c) => overrides[c.id] === undefined);
+    if (inheriting.length === 0) return null;
+    return Math.min(...inheriting.map((c) => PLATFORM_LIMITS[c.platform as Platform] || 10000));
+  }, [previewChannels, overrides]);
+
+  // Save is blocked while any text on its way out is too long for where it's
+  // going — the shared draft for the channels inheriting it, and each channel's
+  // own version against its own platform's limit.
+  const overLimit = useMemo(() => {
+    if (sharedLimit !== null && content.length > sharedLimit) return true;
+    return previewChannels.some((c) => {
+      const own = overrides[c.id];
+      if (own === undefined) return false;
+      const limit = PLATFORM_LIMITS[c.platform as Platform];
+      return limit !== undefined && own.length > limit;
+    });
+  }, [content, sharedLimit, previewChannels, overrides]);
+
+  // Every channel publishes something. Customizing all of them and clearing the
+  // shared draft is a real post; leaving all of them empty is not. Mirrors the
+  // server's own rule in publishPost().
+  const hasContent = previewChannels.length
+    ? previewChannels.some((c) => (overrides[c.id] ?? content).trim())
+    : !!content.trim();
 
   // Selected channels whose platform can't carry this many images. Publishing
   // fails those channels rather than posting a truncated set, so say it here —
@@ -72,24 +110,41 @@ export function PostComposer({ editId, navigate }: Props) {
     return [...messages];
   }, [selectedChannels, channels, mediaUrls.length]);
 
-  // Selected channels, in selection order, for the preview switcher.
-  const previewChannels = useMemo(
-    () => selectedChannels.map((id) => channels.find((c) => c.id === id)).filter(Boolean) as typeof channels,
-    [selectedChannels, channels],
-  );
-
-  // Which selected channel's preview is shown. Defaults to the first selected;
-  // falls back to the first whenever the active one is deselected.
-  const [previewChannelId, setPreviewChannelId] = useState<number | null>(null);
+  // Which tab is open: null = the shared draft ("All channels"), otherwise the
+  // channel being written and previewed. Falls back to the shared draft when
+  // the open channel is deselected.
+  const [activeTab, setActiveTab] = useState<number | null>(null);
   useEffect(() => {
-    if (previewChannels.length === 0) {
-      setPreviewChannelId(null);
-    } else if (!previewChannels.some((c) => c.id === previewChannelId)) {
-      setPreviewChannelId(previewChannels[0].id);
+    if (activeTab !== null && !previewChannels.some((c) => c.id === activeTab)) {
+      setActiveTab(null);
     }
-  }, [previewChannels, previewChannelId]);
+  }, [previewChannels, activeTab]);
 
-  const activePreviewChannel = previewChannels.find((c) => c.id === previewChannelId) ?? previewChannels[0];
+  // The channel the editor is writing for, if any. On the shared tab the
+  // preview still has to pick someone — the first selected channel.
+  const activeChannel = activeTab === null ? undefined : previewChannels.find((c) => c.id === activeTab);
+  const activePreviewChannel = activeChannel ?? previewChannels[0];
+
+  const isCustomized = activeChannel ? overrides[activeChannel.id] !== undefined : false;
+  // What the textarea shows: this channel's own version, else the shared draft
+  // it inherits (read-only until customized, so editing it can't silently
+  // rewrite every other channel).
+  const editorValue = activeChannel ? overrides[activeChannel.id] ?? content : content;
+  const editorLimit = activeChannel
+    ? PLATFORM_LIMITS[activeChannel.platform as Platform] ?? null
+    : sharedLimit;
+  const editorOverLimit = editorLimit !== null && editorValue.length > editorLimit;
+
+  const customize = () => {
+    if (activeChannel) setOverrides((prev) => ({ ...prev, [activeChannel.id]: content }));
+  };
+  const resetToShared = () => {
+    if (!activeChannel) return;
+    setOverrides((prev) => {
+      const { [activeChannel.id]: _dropped, ...rest } = prev;
+      return rest;
+    });
+  };
 
   const toggleChannel = (id: number) => {
     setSelectedChannels((prev) =>
@@ -128,11 +183,19 @@ export function PostComposer({ editId, navigate }: Props) {
   const handleSave = async (status: string) => {
     if (overLimit) return;
     setSaving(true);
+    // Only the selected channels' overrides go out — a version typed for a
+    // channel that is no longer selected isn't part of this post. A channel with
+    // no entry inherits the shared draft server-side.
+    const channel_content: Record<string, string> = {};
+    for (const id of selectedChannels) {
+      if (overrides[id] !== undefined) channel_content[String(id)] = overrides[id];
+    }
     const data = {
       content,
       status,
       scheduled_at: scheduledAt ? localInputToUtc(scheduledAt) : undefined,
       channel_ids: selectedChannels,
+      channel_content,
       label_ids: selectedLabels,
       media_urls: mediaUrls,
     };
@@ -160,19 +223,75 @@ export function PostComposer({ editId, navigate }: Props) {
       <div class="flex gap-6">
         {/* Main editor */}
         <div class="flex-1 space-y-4">
-          <div class="relative">
-            <textarea
-              class={`w-full min-h-[200px] p-4 bg-card border rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring transition-colors ${
-                overLimit ? "border-destructive focus:ring-destructive" : "border-border"
-              }`}
-              placeholder="What do you want to share?"
-              value={content}
-              onInput={(e) => setContent((e.target as HTMLTextAreaElement).value)}
+          <div>
+            {/* One strip for the whole composer: it picks which text you're
+                editing AND which platform you're previewing. */}
+            <ChannelTabs
+              channels={previewChannels}
+              activeId={activeTab}
+              onSelect={setActiveTab}
+              customizedIds={Object.keys(overrides).map(Number)}
             />
-            <div class="flex justify-end mt-1.5">
-              <span class={`text-xs ${overLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
-                {content.length}
-                {charLimit !== null && ` / ${charLimit}`}
+            <textarea
+              class={`w-full min-h-[200px] p-4 border rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring transition-colors ${
+                editorOverLimit ? "border-destructive focus:ring-destructive" : "border-border"
+              } ${
+                activeChannel && !isCustomized
+                  ? "bg-muted/40 text-muted-foreground cursor-default"
+                  : "bg-card"
+              }`}
+              placeholder={
+                activeChannel
+                  ? `What ${activeChannel.name} should post`
+                  : "What do you want to share?"
+              }
+              value={editorValue}
+              readOnly={!!activeChannel && !isCustomized}
+              aria-label={
+                activeChannel
+                  ? `Post text for ${activeChannel.name}`
+                  : "Shared post text"
+              }
+              onInput={(e) => {
+                const value = (e.target as HTMLTextAreaElement).value;
+                if (activeChannel) {
+                  setOverrides((prev) => ({ ...prev, [activeChannel.id]: value }));
+                } else {
+                  setContent(value);
+                }
+              }}
+            />
+            <div class="flex items-center justify-between gap-3 mt-1.5">
+              <div class="text-xs text-muted-foreground">
+                {activeChannel ? (
+                  isCustomized ? (
+                    <button
+                      type="button"
+                      class="text-foreground hover:underline"
+                      onClick={resetToShared}
+                    >
+                      Reset to the shared draft
+                    </button>
+                  ) : (
+                    <>
+                      <span>Using the shared draft. </span>
+                      <button
+                        type="button"
+                        class="text-foreground font-medium hover:underline"
+                        onClick={customize}
+                      >
+                        Write a version for {PLATFORM_LABELS[activeChannel.platform as Platform] || activeChannel.name}
+                      </button>
+                    </>
+                  )
+                ) : (
+                  sharedLimit !== null &&
+                  previewChannels.length > 1 && <span>Goes to every channel without its own version.</span>
+                )}
+              </div>
+              <span class={`text-xs shrink-0 ${editorOverLimit ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                {editorValue.length}
+                {editorLimit !== null && ` / ${editorLimit}`}
               </span>
             </div>
           </div>
@@ -246,19 +365,15 @@ export function PostComposer({ editId, navigate }: Props) {
             )}
           </div>
 
-          {/* Live platform preview — defaults to the first selected channel,
-              switchable between all selected channels. */}
+          {/* Live platform preview — follows the tab strip above, and renders
+              the text that channel will actually publish (its own version, or
+              the shared draft it inherits). */}
           {activePreviewChannel && (
             <div>
               <h3 class="text-sm font-medium mb-2">Preview</h3>
-              <PreviewChannelTabs
-                channels={previewChannels}
-                activeId={activePreviewChannel.id}
-                onSelect={setPreviewChannelId}
-              />
               <PostPreview
                 channel={activePreviewChannel}
-                content={content}
+                content={overrides[activePreviewChannel.id] ?? content}
                 imageUrl={mediaUrls[0]}
                 timeLabel="Now"
               />
@@ -349,14 +464,14 @@ export function PostComposer({ editId, navigate }: Props) {
             <button
               class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
               onClick={() => handleSave("draft")}
-              disabled={saving || !content.trim()}
+              disabled={saving || !hasContent}
             >
               <Save size={14} /> Save Draft
             </button>
             <button
               class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
               onClick={() => handleSave(scheduledAt ? "scheduled" : "draft")}
-              disabled={saving || !content.trim() || overLimit}
+              disabled={saving || !hasContent || overLimit}
             >
               <Send size={14} /> {scheduledAt ? "Schedule" : "Save"}
             </button>
