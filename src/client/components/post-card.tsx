@@ -66,7 +66,7 @@ function ChannelChip({ ch }: { ch: Channel }) {
 export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) {
   const excerpt = post.content.length > 140 ? post.content.slice(0, 140) + "..." : post.content;
   const previewChannel = preview ? post.channels.find((ch) => hasNativePreview(ch.platform)) : undefined;
-  const firstImage = post.media[0]?.url;
+  const firstMedia = post.media[0];
   const timeLabel = post.scheduled_at
     ? new Date(post.scheduled_at + (post.scheduled_at.includes("T") ? "" : "T00:00:00"))
         .toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -75,7 +75,7 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
   return (
     <div class="bg-card border border-border rounded-lg p-4 hover:shadow-md transition-shadow">
       {previewChannel ? (
-        <PostPreview channel={previewChannel} content={post.content} imageUrl={firstImage} timeLabel={timeLabel} />
+        <PostPreview channel={previewChannel} content={post.content} media={firstMedia} timeLabel={timeLabel} />
       ) : (
         <p class="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
           {excerpt || "(empty)"}

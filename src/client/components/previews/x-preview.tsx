@@ -1,11 +1,13 @@
 import { MoreHorizontal, BadgeCheck, MessageCircle, Repeat2, Heart, Bookmark, Share } from "lucide-preact";
+import type { MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   authorName: string;
   handle?: string;
   avatarUrl?: string;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -23,7 +25,7 @@ function toHandle(handle: string | undefined, name: string): string {
 
 const ACTIONS = [MessageCircle, Repeat2, Heart, Bookmark, Share];
 
-export function XPreview({ authorName, handle, avatarUrl, content, imageUrl, timeLabel }: Props) {
+export function XPreview({ authorName, handle, avatarUrl, content, media, timeLabel }: Props) {
   return (
     <div class="bg-white rounded-2xl border border-[#eff3f4] shadow-sm max-w-[552px] text-[#0f1419] overflow-hidden px-4 py-3">
       {/* Header */}
@@ -50,10 +52,8 @@ export function XPreview({ authorName, handle, avatarUrl, content, imageUrl, tim
         {content || <span class="text-[#536471]">What's happening?</span>}
       </div>
 
-      {/* Image */}
-      {imageUrl && (
-        <img src={imageUrl} alt="" class="mt-3 w-full max-h-[480px] object-cover rounded-2xl border border-[#eff3f4]" />
-      )}
+      {/* Attachment */}
+      <PreviewMedia media={media} class="mt-3 w-full max-h-[480px] object-cover rounded-2xl border border-[#eff3f4]" />
 
       {/* Timestamp */}
       {timeLabel && <div class="mt-3 text-[15px] text-[#536471]">{timeLabel}</div>}

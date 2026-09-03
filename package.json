@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "wrangler d1 execute open-post-db --local --file=src/server/schema.sql && concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
     "build": "vite build",
-    "test": "esbuild src/server/index.ts --bundle --format=esm --platform=node --outfile=test/.server.mjs && node test/publish-idempotency.mjs"
+    "test": "esbuild src/server/index.ts --bundle --format=esm --platform=node --outfile=test/.server.mjs && node test/publish-idempotency.mjs && node test/video-publishing.mjs"
   },
   "dependencies": {
     "@clawnify/app": "^0.1.0",

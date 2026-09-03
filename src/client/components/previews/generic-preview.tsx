@@ -1,10 +1,11 @@
 import { PLATFORM_LABELS } from "../../types";
-import type { Channel } from "../../types";
+import type { Channel, MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   channel: Channel;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -17,7 +18,7 @@ function initials(name: string): string {
 
 // Plain text + attachments preview, used for platforms that don't have a
 // native-looking card yet. Mirrors the post's content as it will be sent.
-export function GenericPreview({ channel, content, imageUrl, timeLabel }: Props) {
+export function GenericPreview({ channel, content, media, timeLabel }: Props) {
   return (
     <div class="bg-card rounded-lg border border-border max-w-[552px] overflow-hidden">
       <div class="flex items-center gap-2 px-4 pt-3">
@@ -40,9 +41,7 @@ export function GenericPreview({ channel, content, imageUrl, timeLabel }: Props)
         {content || <span class="text-muted-foreground">What do you want to share?</span>}
       </div>
 
-      {imageUrl && (
-        <img src={imageUrl} alt="" class="w-full max-h-[480px] object-cover bg-muted" />
-      )}
+      <PreviewMedia media={media} class="w-full max-h-[480px] object-cover bg-muted" />
     </div>
   );
 }

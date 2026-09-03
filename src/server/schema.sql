@@ -75,7 +75,12 @@ CREATE TABLE IF NOT EXISTS post_labels (
   PRIMARY KEY (post_id, label_id)
 );
 
--- Media attachments
+-- Media attachments. `type` is 'image' or 'video' and decides which platform
+-- call publishes the post — an images post and a video post go to different
+-- endpoints on every platform that takes both. A post carries either images or
+-- one video, never a mix (mediaShapeError in src/shared/platforms.ts); the rule
+-- lives in code rather than in a constraint because the composer has to explain
+-- it while the attachments are still removable.
 CREATE TABLE IF NOT EXISTS media (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

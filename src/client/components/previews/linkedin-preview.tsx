@@ -1,12 +1,14 @@
 import { useState } from "preact/hooks";
 import { Globe, MoreHorizontal, X, ThumbsUp, MessageSquare, Repeat2, Send } from "lucide-preact";
+import type { MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   authorName: string;
   authorHeadline?: string;
   avatarUrl?: string;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -27,7 +29,7 @@ const ACTIONS = [
   { Icon: Send, label: "Send" },
 ];
 
-export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content, imageUrl, timeLabel }: Props) {
+export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content, media, timeLabel }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const isLong = content.length > COLLAPSE_AT || content.split("\n").length > 4;
@@ -74,10 +76,8 @@ export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content
         )}
       </div>
 
-      {/* Image */}
-      {imageUrl && (
-        <img src={imageUrl} alt="" class="w-full max-h-[480px] object-cover bg-[#f3f2ef]" />
-      )}
+      {/* Attachment */}
+      <PreviewMedia media={media} class="w-full max-h-[480px] object-cover bg-[#f3f2ef]" />
 
       {/* Action bar */}
       <div class="mt-1 border-t border-[#00000014] flex items-center justify-around px-2 py-1">

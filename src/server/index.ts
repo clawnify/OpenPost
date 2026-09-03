@@ -5,7 +5,8 @@ import type { CredentialServiceBinding, StagedFile } from "./credentials";
 import { publishToBluesky, blueskyProfile, type BlueskyCreds } from "./bluesky";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
 import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./uploads";
-import { mediaLimitError } from "../shared/platforms";
+import { mediaError, MAX_VIDEO_BYTES } from "../shared/platforms";
+import { splitMedia, toMediaItem, mediaTypeFromMime, type MediaItem } from "../shared/media";
 
 type Env = {
   Bindings: {
@@ -57,11 +58,12 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
      WHERE pc.post_id = ?`,
     [id],
   );
-  const media = await query<any>("SELECT * FROM media WHERE post_id = ? ORDER BY id ASC", [id]);
-  // Every attached image, in the order the composer shows them. Each platform
-  // decides how many it can carry (see mediaLimitError) — none of them silently
-  // gets a subset.
-  const imageUrls = media.map((m: any) => m.url as string).filter(Boolean);
+  // Every attachment, in the order the composer shows them, images and video
+  // alike. Each platform decides what it can carry (see mediaError) — none of
+  // them silently gets a subset, and none of them silently gets none.
+  const media = (await query<any>("SELECT * FROM media WHERE post_id = ? ORDER BY id ASC", [id]))
+    .map((m: any) => toMediaItem({ url: m.url, type: m.type }))
+    .filter((m): m is MediaItem => m !== null);
 
   // A post is publishable when at least one channel has text to send: the
   // shared draft, or its own override. Overriding every channel and clearing
@@ -104,7 +106,7 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
     );
     if (claim.changes !== 1) continue;
 
-    const r = await publishToChannel(channel, channelContent(channel, post.content), imageUrls);
+    const r = await publishToChannel(channel, channelContent(channel, post.content), media);
     // Persist this channel's delivery outcome on its post_channels row.
     // attempts was already incremented by the claim above.
     await run(
@@ -158,8 +160,9 @@ function channelContent(channel: any, shared: string | null | undefined): string
   return (own ?? shared ?? "") as string;
 }
 
-async function publishToChannel(channel: any, content: string, imageUrls: string[]): Promise<PublishResult> {
+async function publishToChannel(channel: any, content: string, media: MediaItem[]): Promise<PublishResult> {
   const base = { channelId: channel.id as number, channel: channel.name as string, platform: channel.platform as string };
+  const { imageUrls, videoUrl } = splitMedia(media);
 
   // Only reachable when the shared draft is empty and this channel wasn't
   // given its own text — the other channels still go out.
@@ -167,12 +170,13 @@ async function publishToChannel(channel: any, content: string, imageUrls: string
     return { ...base, success: false, error: "No content for this channel. Write a shared draft, or customize this channel." };
   }
 
-  // More images than this platform accepts fails the channel rather than
-  // posting a truncated set. Sending fewer images than the user attached,
-  // silently, is the bug the whole media path exists to avoid — and the
-  // per-channel delivery model means the other channels still go out.
-  const overLimit = mediaLimitError(channel.platform, imageUrls.length);
-  if (overLimit) return { ...base, success: false, error: overLimit };
+  // Media this platform can't carry — too many images, a video it has no call
+  // for, or a mix no platform takes — fails the channel rather than posting a
+  // truncated set. Sending less than the user attached, silently, is the bug the
+  // whole media path exists to avoid, and the per-channel delivery model means
+  // the other channels still go out.
+  const rejected = mediaError(channel.platform, media);
+  if (rejected) return { ...base, success: false, error: rejected };
 
   switch (channel.platform) {
     case "twitter": {
@@ -272,10 +276,40 @@ async function publishToChannel(channel: any, content: string, imageUrls: string
       return { ...base, success: !!pub?.successful, error: pub?.successful ? undefined : (pub?.error || "Instagram publish failed"), ref };
     }
     case "tiktok": {
-      // Composio execute, single-step photo post (TikTok Content Posting API).
-      // Image-only for now, matching this app's photo-first media model.
-      // photo_images carries the whole set (1-35); the first is the cover.
-      if (!imageUrls.length) return { ...base, success: false, error: "TikTok requires an image." };
+      // Video: upload the bytes, then let the same call publish them.
+      //
+      // Not TIKTOK_PUBLISH_VIDEO, which is the URL-pull sibling and would be
+      // one call instead of two: TikTok only pulls from a domain verified in
+      // the developer portal that owns the app, and this app's own hostname is
+      // not one, so it answers 403. Uploading the bytes sidesteps verification
+      // — at the cost of the broker's own staging ceiling (10 MB), which comes
+      // back as the staging error below rather than as a TikTok rejection.
+      if (videoUrl) {
+        const staged = await stageFile("tiktok", "TIKTOK_UPLOAD_VIDEO", videoUrl);
+        if (!staged) return { ...base, success: false, error: "Couldn't upload the video to TikTok. Reconnect TikTok in Clawnify." };
+        if (!staged.descriptor) return { ...base, success: false, error: `TikTok video upload failed: ${staged.error}` };
+        const up = await executeTool("tiktok", "TIKTOK_UPLOAD_VIDEO", {
+          file_to_upload: staged.descriptor,
+          caption: content.slice(0, 2200),
+          privacy_level: "PUBLIC_TO_EVERYONE",
+          publish: true,
+        });
+        if (!up) return { ...base, success: false, error: "No TikTok credentials. Connect TikTok in Clawnify." };
+        const d = ((up.data as any)?.data ?? up.data ?? {}) as { publish_id?: string; published?: boolean };
+        if (!up.successful) return { ...base, success: false, error: tiktokError(up.error, up.data) };
+        // Uploaded but not published is TikTok's inbox: the video is a draft in
+        // the creator's app, not a post on their profile. Reporting that as
+        // delivered would leave the channel marked live with nothing live.
+        if (!d.published) {
+          return { ...base, success: false, ref: d.publish_id,
+            error: "TikTok took the video but didn't publish it — it's waiting as a draft in the TikTok app." };
+        }
+        return { ...base, success: true, ref: d.publish_id };
+      }
+
+      // Photos: single-step post (TikTok Content Posting API). photo_images
+      // carries the whole set (1-35); the first is the cover.
+      if (!imageUrls.length) return { ...base, success: false, error: "TikTok requires an image or a video." };
       const r = await executeTool("tiktok", "TIKTOK_POST_PHOTO", {
         post_mode: "DIRECT_POST",
         photo_images: imageUrls,
@@ -287,17 +321,7 @@ async function publishToChannel(channel: any, content: string, imageUrls: string
       if (!r) return { ...base, success: false, error: "No TikTok credentials. Connect TikTok in Clawnify." };
       const d = (r.data as any)?.data || (r.data as any) || {};
       const ref = d.publish_id as string | undefined;
-      // TikTok rejects PUBLIC_TO_EVERYONE (rather than silently downgrading
-      // it) from apps TikTok hasn't audited yet, and from personal accounts
-      // that haven't unlocked public posting — both surface as one of these
-      // literal error codes. Relabel them instead of guessing a "safe" privacy
-      // level up front, which would post successfully but invisibly to
-      // everyone (Postiz's tiktok.provider.ts does the same relabeling).
-      const raw = String(r.error || JSON.stringify(r.data || {}));
-      const friendly = /unaudited_client_can_only_post_to_private_accounts|privacy_level_option_mismatch/.test(raw)
-        ? "TikTok hasn't approved this account for public posts (app audit or account type). Contact support, or set this account to allow public posting in the TikTok app."
-        : r.error || "TikTok post failed";
-      return { ...base, success: !!r.successful, error: r.successful ? undefined : friendly, ref };
+      return { ...base, success: !!r.successful, error: r.successful ? undefined : tiktokError(r.error, r.data), ref };
     }
     case "facebook": {
       // Composio execute against the Graph API. Facebook only lets apps publish
@@ -307,6 +331,23 @@ async function publishToChannel(channel: any, content: string, imageUrls: string
       // through /feed (Postiz's facebook.provider.ts splits the same way).
       const pageId = accountId(channel);
       if (!pageId) return { ...base, success: false, error: "Facebook channel has no Page selected." };
+      // Video is its own Graph endpoint (/videos, not /feed or /photos) and
+      // takes the file by URL, so nothing is staged: Facebook fetches it from
+      // this app's own public /api/uploads route.
+      if (videoUrl) {
+        const v = await executeTool("facebook", "FACEBOOK_CREATE_VIDEO_POST", {
+          page_id: pageId,
+          file_url: videoUrl,
+          description: content,
+          published: true,
+        });
+        if (!v) return { ...base, success: false, error: "No Facebook credentials. Connect Facebook in Clawnify." };
+        const vd = (((v.data as any)?.response_data ?? v.data) || {}) as { id?: string };
+        // The id here is the video's, not a page_post id, so it takes the
+        // /videos permalink rather than facebookPostUrl's /posts one.
+        const vurl = vd.id ? `https://www.facebook.com/${pageId}/videos/${vd.id}` : undefined;
+        return { ...base, success: !!v.successful, error: v.successful ? undefined : (v.error || "Facebook video post failed"), ref: vd.id, url: vurl };
+      }
       // Several photos need the unpublished-upload + attached_media dance;
       // FACEBOOK_CREATE_MULTI_PHOTO_POST does the whole thing in one call and
       // fails the post outright if any upload fails, so a partial set never
@@ -389,6 +430,20 @@ async function uploadTwitterMedia(imageUrl: string): Promise<{ mediaId: string }
   const mediaId = (r.data as { data?: { id?: string } } | null)?.data?.id;
   if (!r.successful || !mediaId) return { error: `X image upload failed: ${r.error || "no media id returned"}` };
   return { mediaId };
+}
+
+// TikTok rejects PUBLIC_TO_EVERYONE (rather than silently downgrading it) from
+// apps TikTok hasn't audited yet, and from personal accounts that haven't
+// unlocked public posting — both surface as one of these literal error codes.
+// Relabel them instead of guessing a "safe" privacy level up front, which would
+// post successfully but invisibly to everyone (Postiz's tiktok.provider.ts does
+// the same relabeling). Shared by the photo and the video path: the privacy
+// level is the account's, not the media's, so both hit it the same way.
+function tiktokError(error: string | null | undefined, data: unknown): string {
+  const raw = String(error || JSON.stringify(data || {}));
+  return /unaudited_client_can_only_post_to_private_accounts|privacy_level_option_mismatch/.test(raw)
+    ? "TikTok hasn't approved this account for public posts (app audit or account type). Contact support, or set this account to allow public posting in the TikTok app."
+    : error || "TikTok post failed";
 }
 
 // The platform-side account a channel publishes as (Facebook Page ID,
@@ -580,24 +635,35 @@ app.use("*", async (c, next) => {
   await next();
 });
 
-// ── Image uploads ──
+// ── Media uploads ──
 
-// Upload an image to R2 and return its absolute, publicly-fetchable URL. The
-// URL must be public because the social platforms (Instagram especially) fetch
-// the image server-side at publish time — see /api/uploads/:key in the public
-// routes (clawnify.json).
+// Upload an image or a video to R2 and return its absolute, publicly-fetchable
+// URL. The URL must be public because the social platforms fetch the file
+// server-side at publish time — Instagram for images, Facebook for video — see
+// /api/uploads/:key in the public routes (clawnify.json).
 app.post("/api/upload", async (c) => {
   if (!uploadsEnabled()) return c.json({ error: "Uploads not configured" }, 503);
   const body = await c.req.parseBody();
   const file = body["file"];
   if (!file || typeof file === "string") return c.json({ error: "No file provided" }, 400);
-  if (!file.type.startsWith("image/")) return c.json({ error: "Only images are supported" }, 400);
 
-  const key = makeKey(file.name || "image");
-  await putUpload(key, await file.arrayBuffer(), file.type || "application/octet-stream");
+  const type = mediaTypeFromMime(file.type);
+  if (!type) return c.json({ error: "Only images and videos can be attached to a post" }, 400);
+  // Videos are capped because the whole file crosses this Worker on its way to
+  // R2. Images have no cap here: the platforms' own limits are far below
+  // anything a Worker struggles with, and their rejection is the better error.
+  if (type === "video" && file.size > MAX_VIDEO_BYTES) {
+    return c.json({ error: `Videos are limited to ${Math.round(MAX_VIDEO_BYTES / (1024 * 1024))} MB.` }, 413);
+  }
+
+  // The File goes to R2 as-is (a Blob is one of the values put() takes) rather
+  // than through an ArrayBuffer: a video is large enough that buffering it
+  // first would put the whole file in the Worker's memory.
+  const key = makeKey(file.name || type);
+  await putUpload(key, file, file.type || "application/octet-stream");
 
   const url = `${new URL(c.req.url).origin}/api/uploads/${key}`;
-  return c.json({ url }, 201);
+  return c.json({ url, type }, 201);
 });
 
 app.get("/api/uploads/:key", async (c) => {
@@ -773,6 +839,21 @@ async function setPostChannels(
   }
 }
 
+// Replace a post's attachments with exactly what the request carried.
+//
+// Wholesale replacement is right here and wrong for post_channels: an
+// attachment holds no delivery state to lose, so re-inserting it costs
+// nothing, while a post_channels row carries the link to a post that is
+// already live (see setPostChannels).
+async function setPostMedia(postId: number, media: unknown[]): Promise<void> {
+  await run("DELETE FROM media WHERE post_id = ?", [postId]);
+  for (const entry of media) {
+    const item = toMediaItem(entry);
+    if (!item) continue;
+    await run("INSERT INTO media (post_id, url, type) VALUES (?, ?, ?)", [postId, item.url, item.type]);
+  }
+}
+
 async function enrichPost(post: any) {
   // Include the per-channel delivery state (Postiz-style) so the UI can show
   // each channel's status, link out to the live post, and surface failures.
@@ -878,7 +959,7 @@ app.get("/api/posts/:id", async (c) => {
 });
 
 app.post("/api/posts", async (c) => {
-  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media_urls } = await c.req.json<{
+  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media } = await c.req.json<{
     content: string;
     status?: string;
     scheduled_at?: string;
@@ -887,7 +968,10 @@ app.post("/api/posts", async (c) => {
     // omits it posts the same shared draft everywhere, exactly as before.
     channel_content?: Record<string, string | null>;
     label_ids?: number[];
-    media_urls?: string[];
+    // Attachments, in display order. A bare string is an image URL whose type
+    // is read off the extension; { url, type } says it outright, which is what
+    // /api/upload returns and what a pasted .mp4 link needs.
+    media?: Array<string | { url: string; type?: string }>;
   }>();
 
   const postStatus = status || (scheduled_at ? "scheduled" : "draft");
@@ -905,10 +989,8 @@ app.post("/api/posts", async (c) => {
       await run("INSERT INTO post_labels (post_id, label_id) VALUES (?, ?)", [postId, lid]);
     }
   }
-  if (media_urls?.length) {
-    for (const url of media_urls) {
-      await run("INSERT INTO media (post_id, url) VALUES (?, ?)", [postId, url]);
-    }
+  if (media?.length) {
+    await setPostMedia(Number(postId), media);
   }
 
   await syncSchedule(c.env, new URL(c.req.url).origin, Number(postId), postStatus, scheduled_at || null, null);
@@ -922,14 +1004,14 @@ app.put("/api/posts/:id", async (c) => {
   const existing = await get("SELECT * FROM posts WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
 
-  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media_urls } = await c.req.json<{
+  const { content, status, scheduled_at, channel_ids, channel_content, label_ids, media } = await c.req.json<{
     content?: string;
     status?: string;
     scheduled_at?: string | null;
     channel_ids?: number[];
     channel_content?: Record<string, string | null>;
     label_ids?: number[];
-    media_urls?: string[];
+    media?: Array<string | { url: string; type?: string }>;
   }>();
 
   await run(
@@ -951,11 +1033,8 @@ app.put("/api/posts/:id", async (c) => {
       await run("INSERT INTO post_labels (post_id, label_id) VALUES (?, ?)", [id, lid]);
     }
   }
-  if (media_urls !== undefined) {
-    await run("DELETE FROM media WHERE post_id = ?", [id]);
-    for (const url of media_urls) {
-      await run("INSERT INTO media (post_id, url) VALUES (?, ?)", [id, url]);
-    }
+  if (media !== undefined) {
+    await setPostMedia(id, media);
   }
 
   const resolvedStatus = status ?? (existing as any).status;
