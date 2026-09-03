@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler d1 execute open-post-db --local --file=src/server/schema.sql && concurrently -n ui,api -c cyan,green \"vite\" \"wrangler dev --port 8787\"",
-    "build": "vite build"
+    "build": "vite build",
+    "test": "esbuild src/server/index.ts --bundle --format=esm --platform=node --outfile=test/.server.mjs && node test/publish-idempotency.mjs"
   },
   "dependencies": {
     "@clawnify/app": "^0.1.0",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@preact/preset-vite": "^2.9.0",
     "concurrently": "^9.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "wrangler": "^4.0.0"

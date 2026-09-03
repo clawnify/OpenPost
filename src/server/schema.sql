@@ -60,6 +60,10 @@ CREATE TABLE IF NOT EXISTS post_channels (
   url TEXT,            -- link to the live post (Postiz: releaseURL)
   error TEXT,          -- platform rejection reason when status = 'failed'
   published_at TEXT,
+  -- Delivery attempts, and the claim token that makes publishing re-entrant:
+  -- publishPost() bumps this with a compare-and-swap before it sends, so two
+  -- concurrent deliveries of the same post (the queue is at-least-once) can
+  -- never both send to this channel. See publishPost() in src/server/index.ts.
   attempts INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (post_id, channel_id)
 );

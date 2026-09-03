@@ -116,11 +116,21 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
           )}
         </div>
         <div class="flex items-center gap-1">
-          {onPublish && (post.status === "scheduled" || post.status === "failed") && (
+          {/* A partial post is the one that most needs this button — some
+              channels went out, some didn't — and it used to be the one status
+              that couldn't reach it. Safe now that publishing skips channels
+              already delivered (publishPost, src/server/index.ts). */}
+          {onPublish && (post.status === "scheduled" || post.status === "failed" || post.status === "partial") && (
             <button
               onClick={() => onPublish(post.id)}
               class="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
-              title={post.status === "failed" ? "Retry" : "Publish now"}
+              title={
+                post.status === "partial"
+                  ? "Retry the channels that failed"
+                  : post.status === "failed"
+                    ? "Retry"
+                    : "Publish now"
+              }
             >
               <Send size={14} />
             </button>
