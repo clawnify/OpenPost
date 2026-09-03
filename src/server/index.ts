@@ -42,9 +42,17 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
   if (!post) return null;
 
   // channel_content is this channel's own version of the text; NULL means it
-  // inherits the shared draft (posts.content).
+  // inherits the shared draft (posts.content). The pc.* delivery columns come
+  // along because this function is re-entrant: it must know which channels are
+  // already live before it sends anything.
   const channels = await query<any>(
-    `SELECT c.*, pc.content AS channel_content FROM channels c
+    `SELECT c.*,
+            pc.content AS channel_content,
+            pc.status AS delivery_status,
+            pc.ref AS delivery_ref,
+            pc.url AS delivery_url,
+            pc.attempts AS delivery_attempts
+     FROM channels c
      JOIN post_channels pc ON pc.channel_id = c.id
      WHERE pc.post_id = ?`,
     [id],
@@ -62,13 +70,47 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
 
   const results: PublishResult[] = [];
   for (const channel of channels) {
+    const base = {
+      channelId: channel.id as number,
+      channel: channel.name as string,
+      platform: channel.platform as string,
+    };
+
+    // Already live. Report it as delivered — with the link it got the first
+    // time — and send nothing. This is what makes the whole function safe to
+    // run twice: the queue delivers at least once, so a redelivery (or a user
+    // retrying a partial post) re-enters here with some channels already
+    // published, and a tweet cannot be un-posted.
+    if (channel.delivery_status === "published") {
+      results.push({ ...base, success: true, ref: channel.delivery_ref ?? undefined, url: channel.delivery_url ?? undefined });
+      continue;
+    }
+
+    // Claim the channel before sending: bump attempts only if it still holds
+    // the value we read. Two deliveries racing each other both read the same
+    // attempts, both try the swap, and exactly one wins — the loser skips
+    // rather than posting a duplicate. Using the existing attempts counter (a
+    // column that was written but never read) rather than a "sending" status
+    // means a crashed run leaves no wedged row: the status is still
+    // pending/failed, so the next retry simply claims it again.
+    //
+    // What this cannot cover: a crash after the platform accepted the post but
+    // before the result was written. Only a platform-side idempotency key
+    // could, and none of these APIs offers one.
+    const claim = await run(
+      `UPDATE post_channels SET attempts = attempts + 1
+        WHERE post_id = ? AND channel_id = ? AND status != 'published' AND attempts = ?`,
+      [id, channel.id, channel.delivery_attempts ?? 0],
+    );
+    if (claim.changes !== 1) continue;
+
     const r = await publishToChannel(channel, channelContent(channel, post.content), imageUrls);
     // Persist this channel's delivery outcome on its post_channels row.
+    // attempts was already incremented by the claim above.
     await run(
       `UPDATE post_channels
          SET status = ?, ref = ?, url = ?, error = ?,
-             published_at = CASE WHEN ? THEN datetime('now') ELSE published_at END,
-             attempts = attempts + 1
+             published_at = CASE WHEN ? THEN datetime('now') ELSE published_at END
        WHERE post_id = ? AND channel_id = ?`,
       [
         r.success ? "published" : "failed",
@@ -83,10 +125,20 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
     results.push(r);
   }
 
-  // Roll the post's own status up from the per-channel outcomes: all delivered
-  // → published, some delivered → partial, none → failed.
-  const delivered = results.filter((r) => r.success).length;
-  const rollup = delivered === 0 ? "failed" : delivered < results.length ? "partial" : "published";
+  // Roll the post's status up from what the table now says, not from this
+  // run's results: a retry only touches the channels that had not gone out,
+  // and a concurrent delivery may have settled the rest. Re-reading is the
+  // only view that covers both.
+  const states = await query<any>("SELECT status FROM post_channels WHERE post_id = ?", [id]);
+  const delivered = states.filter((s: any) => s.status === "published").length;
+  const inFlight = states.filter((s: any) => s.status === "pending").length;
+  const rollup =
+    delivered === states.length ? "published"
+    : delivered > 0 ? "partial"
+    // Nothing delivered but something is still pending: another delivery holds
+    // it. Don't call the post failed on its behalf.
+    : inFlight > 0 ? (post.status as string)
+    : "failed";
   await run(
     `UPDATE posts
        SET status = ?,
@@ -682,19 +734,37 @@ app.delete("/api/labels/:id", async (c) => {
 
 // ── Posts ──
 
-// Write a post's channel rows, carrying each channel's own version of the text
-// where the request supplied one. A blank override is stored as NULL — "no
-// override, inherit the shared draft" — so an emptied box never publishes an
-// empty post.
+// Reconcile a post's channel rows against the set the request asked for,
+// carrying each channel's own version of the text where it supplied one. A
+// blank override is stored as NULL — "no override, inherit the shared draft" —
+// so an emptied box never publishes an empty post.
+//
+// Channels that stay on the post are updated in place, never deleted and
+// re-inserted. Their post_channels row carries the delivery state (status /
+// ref / url / published_at), so re-inserting would drop the link to a post
+// that is already live and reset it to "pending" — losing the link the user
+// clicks through, and re-arming publishPost to send the same thing again.
+// Editing a post must not be able to double-post it.
 async function setPostChannels(
   postId: number,
   channelIds: number[],
   overrides: Record<string, string | null> | undefined,
 ): Promise<void> {
+  // Drop only the channels the post no longer has.
+  if (channelIds.length) {
+    await run(
+      `DELETE FROM post_channels
+        WHERE post_id = ? AND channel_id NOT IN (${channelIds.map(() => "?").join(", ")})`,
+      [postId, ...channelIds],
+    );
+  } else {
+    await run("DELETE FROM post_channels WHERE post_id = ?", [postId]);
+  }
   for (const cid of channelIds) {
     const own = overrides?.[String(cid)];
     await run(
-      "INSERT INTO post_channels (post_id, channel_id, content) VALUES (?, ?, ?)",
+      `INSERT INTO post_channels (post_id, channel_id, content) VALUES (?, ?, ?)
+       ON CONFLICT(post_id, channel_id) DO UPDATE SET content = excluded.content`,
       [postId, cid, typeof own === "string" && own.trim() ? own : null],
     );
   }
@@ -870,7 +940,6 @@ app.put("/api/posts/:id", async (c) => {
   );
 
   if (channel_ids !== undefined) {
-    await run("DELETE FROM post_channels WHERE post_id = ?", [id]);
     await setPostChannels(id, channel_ids, channel_content);
   }
   if (label_ids !== undefined) {

@@ -19,6 +19,7 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 - **Dashboard** -- at-a-glance stats, upcoming posts, and recent drafts
 - **Native previews** -- see the post as it will look on each selected platform before it goes out
 - **Direct publishing** -- publish to X, LinkedIn, Instagram, Facebook Pages, TikTok and Bluesky through the accounts connected in Clawnify
+- **Publish once, exactly once** -- a channel that has already gone out is never sent again, so retrying a half-delivered post, editing a post that is already live, or a scheduled delivery arriving twice all do the right thing instead of double-posting
 - **URL routing** -- bookmarkable pages (`/compose`, `/calendar`, `/queue`, `/drafts`, `/channels`, `/analytics`)
 
 ### Supported Platforms
@@ -56,9 +57,28 @@ pnpm dev
 
 Open `http://localhost:5173` in your browser. The database schema is applied automatically on startup.
 
+### Tests
+
+```bash
+pnpm test
+```
+
+Runs the real API against an in-memory SQLite database, in process -- no dev
+server and nothing to deploy. Covers the publishing rules above by counting the
+calls the app actually makes to each platform. Needs Node 22.5+ (for
+`node:sqlite`).
+
 ### Publishing
 
 Publishing runs through the accounts connected in Clawnify -- no API keys in the app. Locally there is no credential service, so posts save and schedule but publishing reports each channel as not connected.
+
+Each channel on a post is delivered and tracked on its own: one platform rejecting
+the content marks that channel failed, with the reason, while the rest still go
+out. The post then reads `partial`, and **Retry** sends only the channels that
+did not make it -- a published channel is never posted to twice, whether the
+retry comes from you, from an edit, or from a scheduled delivery that arrives
+more than once. There is no undo on a live post, so this is enforced in the
+database rather than left to the caller.
 
 ## Tech Stack
 
@@ -104,6 +124,9 @@ src/
       analytics-view.tsx -- Bar charts and daily activity
       post-card.tsx      -- Reusable post preview card
       error-banner.tsx   -- Error display
+test/
+  harness.mjs              -- Boots the real API over an in-memory SQLite database
+  publish-idempotency.mjs  -- Publishing is safe to run twice
 ```
 
 ### API Endpoints
