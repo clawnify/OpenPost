@@ -47,13 +47,32 @@ function storage(db) {
  */
 function broker(plan = {}) {
   const sends = [];
+  // Every status check the app made, so "did it confirm before calling this
+  // published" is a counted fact rather than something inferred.
+  const polls = [];
   const linkedinOk = plan.linkedinOk ?? (() => true);
+  // TikTok's upload action can succeed while leaving the video unpublished — a
+  // draft in the creator's inbox rather than a post on their profile. The
+  // scenario picks which of the two happened.
+  const tiktokPublished = plan.tiktokPublished ?? (() => true);
+  // TikTok only *accepts* a post synchronously; whether it went live is a
+  // separate status call, and the scenario decides what that call reports.
+  // Called once per poll, so a scenario can return PROCESSING_UPLOAD forever to
+  // reproduce a post the app never gets a verdict on.
+  const tiktokStatus = plan.tiktokStatus ?? (() => ({ status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7500"] }));
   return {
     sends,
+    polls,
     binding: {
       async getToken() { return null; },
       async listConnected() { return []; },
       async getCredentials() { return null; },
+      // The broker stages a file and hands back an opaque descriptor; the app's
+      // only correct use is to forward it, so the stub returns a marked object
+      // the assertions can recognise on the far side.
+      async stageFile(service, toolSlug, file) {
+        return { descriptor: { staged: file.url, tool: toolSlug }, error: null };
+      },
       async executeTool(service, toolSlug, args) {
         switch (toolSlug) {
           case "TWITTER_USER_LOOKUP_ME":
@@ -62,12 +81,43 @@ function broker(plan = {}) {
             return linkedinOk()
               ? { data: { id: "li-me", localizedFirstName: "Test", localizedLastName: "User" }, error: null, successful: true }
               : { data: null, error: "LinkedIn token expired", successful: false };
+          case "TWITTER_UPLOAD_MEDIA":
+            // Not a send: uploading media posts nothing. It only mints the id
+            // the tweet then attaches, so a tweet that lost its image still
+            // shows up below as a send with no media ids.
+            return { data: { data: { id: `media-${args.media?.staged ?? "?"}` } }, error: null, successful: true };
           case "TWITTER_CREATION_OF_A_POST":
-            sends.push({ service, toolSlug, text: args.text });
+            sends.push({ service, toolSlug, text: args.text, images: args.media_media_ids });
             return { data: { data: { id: `tw-${sends.length}` } }, error: null, successful: true };
           case "LINKEDIN_CREATE_LINKED_IN_POST":
-            sends.push({ service, toolSlug, text: args.commentary });
+            sends.push({ service, toolSlug, text: args.commentary, images: args.images });
             return { data: { x_restli_id: `li-${sends.length}` }, error: null, successful: true };
+          case "TIKTOK_UPLOAD_VIDEO":
+            sends.push({ service, toolSlug, text: args.caption, video: args.file_to_upload?.staged });
+            return {
+              data: { publish_id: `tt-${sends.length}`, published: tiktokPublished(), upload_completed: true },
+              error: null,
+              successful: true,
+            };
+          case "TIKTOK_POST_PHOTO":
+            sends.push({ service, toolSlug, text: args.description, images: args.photo_images });
+            return { data: { publish_id: `tt-${sends.length}` }, error: null, successful: true };
+          case "TIKTOK_FETCH_PUBLISH_STATUS": {
+            // Not a send: asking TikTok what happened posts nothing. Composio
+            // wraps TikTok's body twice — data.data plus a sibling data.error.
+            polls.push(args.publish_id);
+            const body = tiktokStatus(args.publish_id, polls.length);
+            return { data: { data: body, error: { code: "ok", message: "", log_id: "l1" } }, error: null, successful: true };
+          }
+          case "FACEBOOK_CREATE_VIDEO_POST":
+            sends.push({ service, toolSlug, text: args.description, video: args.file_url });
+            return { data: { id: `fbv-${sends.length}` }, error: null, successful: true };
+          case "FACEBOOK_CREATE_POST":
+            sends.push({ service, toolSlug, text: args.message });
+            return { data: { id: `fb-${sends.length}` }, error: null, successful: true };
+          case "FACEBOOK_CREATE_PHOTO_POST":
+            sends.push({ service, toolSlug, text: args.message, images: [args.url] });
+            return { data: { post_id: `fb-${sends.length}` }, error: null, successful: true };
           default:
             return { data: null, error: `harness has no stub for ${toolSlug}`, successful: false };
         }
@@ -98,6 +148,7 @@ export async function boot(plan) {
   return {
     db,
     sends: b.sends,
+    polls: b.polls,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body ?? {}),
     put: (path, body) => send("PUT", path, body),

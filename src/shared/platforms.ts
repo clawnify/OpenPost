@@ -5,6 +5,8 @@
 // same media limits it warns about: two copies of this table would drift, and
 // the copy that drifts is the one that only fails at send time.
 
+import type { MediaItem } from "./media";
+
 export type Platform =
   | "twitter"
   | "linkedin"
@@ -84,11 +86,56 @@ export const PLATFORM_LABELS: Record<Platform, string> = {
   tiktok: "TikTok",
 };
 
-// Why a channel can't take this many images, in the user's words. Null when the
-// count is fine (or the platform states no cap).
-export function mediaLimitError(platform: string, count: number): string | null {
-  const max = PLATFORM_MEDIA_LIMITS[platform as Platform];
-  if (max === undefined || count <= max) return null;
+// The platforms this app can deliver a video to. Membership is about the call
+// this app has, not about what the platform's own product does: TikTok is a
+// video service, but it is on this list because TIKTOK_UPLOAD_VIDEO takes the
+// bytes, while X is off it because the broker's X media upload has no verified
+// answer for a video's asynchronous processing yet.
+//
+//   facebook — FACEBOOK_CREATE_VIDEO_POST.file_url pulls the video from a URL.
+//   tiktok   — TIKTOK_UPLOAD_VIDEO.file_to_upload takes the bytes. (Its URL-pull
+//              sibling, TIKTOK_PUBLISH_VIDEO, needs the URL's domain to be
+//              verified with TikTok, which an app's own hostname is not.)
+export const PLATFORM_VIDEO: Partial<Record<Platform, boolean>> = {
+  facebook: true,
+  tiktok: true,
+};
+
+// The most bytes /api/upload accepts for one video. The ceiling that actually
+// binds is smaller and lives in the credential broker, which buffers a staged
+// file whole (10 MB) — but that limit is TikTok's path only, and a Facebook
+// video is passed as a URL and never staged. So this caps what the app stores;
+// the per-platform failure says the rest.
+export const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+
+// Why this set of attachments is not a post any platform would take, in the
+// user's words. Null when the shape is fine. Platform-independent on purpose:
+// these two rules hold everywhere this app publishes, so they are checked once
+// rather than repeated per channel.
+export function mediaShapeError(media: MediaItem[]): string | null {
+  const videos = media.filter((m) => m.type === "video").length;
+  if (videos > 1) return `A post carries one video; this one has ${videos}.`;
+  if (videos && media.length > videos) return "A post carries either images or a video, not both.";
+  return null;
+}
+
+// Why this channel can't carry these attachments, in the user's words. Null
+// when it can. The composer shows this next to the images while they are still
+// removable; publishToChannel calls the same function so the two can't disagree
+// about what would have been rejected.
+export function mediaError(platform: string, media: MediaItem[]): string | null {
+  const shape = mediaShapeError(media);
+  if (shape) return shape;
+
   const label = PLATFORM_LABELS[platform as Platform] ?? platform;
-  return `${label} takes at most ${max} image${max === 1 ? "" : "s"}; this post has ${count}.`;
+  if (media.some((m) => m.type === "video") && !PLATFORM_VIDEO[platform as Platform]) {
+    return `${label} video posts aren't supported yet. Remove the video, or unselect this channel.`;
+  }
+
+  const images = media.filter((m) => m.type === "image").length;
+  const max = PLATFORM_MEDIA_LIMITS[platform as Platform];
+  if (max !== undefined && images > max) {
+    return `${label} takes at most ${max} image${max === 1 ? "" : "s"}; this post has ${images}.`;
+  }
+  return null;
 }
