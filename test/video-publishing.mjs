@@ -262,4 +262,90 @@ section("A TikTok post TikTok hasn't ruled on is re-checked, never re-sent");
     h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "published");
 }
 
+
+section("An unconfirmed TikTok post arranges its own follow-up");
+{
+  // Nobody is watching the request once it returns, so the re-check has to be
+  // queued work. It goes to /api/internal/publish — the same endpoint the
+  // scheduler uses — because publishPost already re-checks rather than re-sends.
+  let verdict = { status: "PROCESSING_UPLOAD" };
+  const h = await boot({ queue: true, tiktokStatus: () => verdict });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "still cooking",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  await h.post(`/api/posts/${post.id}/publish`);
+
+  check("it queued exactly one follow-up", h.queued.length === 1, JSON.stringify(h.queued));
+  const job = h.queued[0]?.body ?? {};
+  check("aimed at the endpoint that re-checks, carrying this post",
+    /\/api\/internal\/publish$/.test(job.target_url || "") && job.payload?.post_id === post.id,
+    JSON.stringify(job));
+  check("a minute out, not immediately",
+    Math.round((Date.parse(job.run_at) - Date.now()) / 1000) >= 55, job.run_at);
+  check("and the schedule column is untouched — that job is the post's own",
+    h.row("SELECT queue_job_id FROM posts WHERE id = ?", post.id).queue_job_id === null);
+
+  // The follow-up lands and TikTok has made up its mind: it confirms, and asks
+  // for nothing further.
+  verdict = { status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7502"] };
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("once it settles, nothing more is queued", h.queued.length === 1, JSON.stringify(h.queued));
+  check("and the post is published",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "published");
+}
+
+section("A post TikTok never rules on stops rescheduling itself");
+{
+  // The ladder is the runaway guard: without it a publish_id the platform never
+  // settles would re-queue itself forever. Past the last rung the row keeps its
+  // ref and the author keeps the retry — nothing loops.
+  const h = await boot({ queue: true, tiktokStatus: () => ({ status: "PROCESSING_UPLOAD" }) });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "never settles",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("the first delivery queues a follow-up", h.queued.length === 1);
+
+  // Stand on the ladder's last rung, as a run of deliveries would have left us.
+  // The claim bumps attempts before the re-check reads it, so 4 here is the 5th
+  // and final delay.
+  h.db.prepare("UPDATE post_channels SET attempts = 4 WHERE post_id = ?").run(post.id);
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("the last rung still queues one", h.queued.length === 2, JSON.stringify(h.queued.length));
+
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("past it, nothing more is queued", h.queued.length === 2);
+  check("but the post keeps its id and its retry",
+    h.row("SELECT status, ref FROM post_channels WHERE post_id = ?", post.id).ref === "tt-1" &&
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "partial");
+}
+
+section("Without the managed queue, publishing still works — it just can't self-resolve");
+{
+  // The self-hosted case. Scheduling degrades to nothing, so the in-request
+  // poll is the only confirmation there is, and it must not take the post down
+  // with it when there's no queue to fall back on.
+  const h = await boot({ tiktokStatus: () => ({ status: "PROCESSING_UPLOAD" }) });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "no queue here",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const res = await h.post(`/api/posts/${post.id}/publish`);
+  check("the publish still succeeds as a request", res.status === 200);
+  check("nothing was queued", h.queued.length === 0);
+  check("and the row still holds the id, so a manual retry can confirm it",
+    h.row("SELECT status, ref FROM post_channels WHERE post_id = ?", post.id).ref === "tt-1");
+}
+
 report();

@@ -126,13 +126,37 @@ function broker(plan = {}) {
   };
 }
 
+// The managed queue is a plain HTTPS call, so intercepting fetch is enough to
+// see what the app asked the platform to do later. Installed once — scenarios
+// run in one process — and each boot only reads the entries made after it.
+const enqueued = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  if (String(url).startsWith("https://services.clawnify.com/queue")) {
+    enqueued.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
+    return new Response(JSON.stringify({ job_id: `job-${enqueued.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return realFetch(url, init);
+};
+
 /** A running app with an empty database, plus helpers to drive it over HTTP. */
-export async function boot(plan) {
+export async function boot(plan = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA);
   const { default: app } = await import(`${BUNDLE}?${instance++}`);
   const b = broker(plan);
-  const env = { STORAGE: storage(db), CREDENTIALS: b.binding, CLAWNIFY_ORG_ID: "org-test" };
+  const queueMark = enqueued.length;
+  const env = {
+    STORAGE: storage(db),
+    CREDENTIALS: b.binding,
+    CLAWNIFY_ORG_ID: "org-test",
+    // Present only when the scenario is about deferred work. Its absence is the
+    // self-hosted deploy, where scheduling degrades to nothing.
+    ...(plan.queue ? { CLAWNIFY_TOKEN: "tok-test" } : {}),
+  };
 
   const send = async (method, path, body) => {
     const res = await app.request(
@@ -149,6 +173,8 @@ export async function boot(plan) {
     db,
     sends: b.sends,
     polls: b.polls,
+    // Jobs this scenario asked the managed queue to run later.
+    get queued() { return enqueued.slice(queueMark); },
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body ?? {}),
     put: (path, body) => send("PUT", path, body),

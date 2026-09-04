@@ -44,7 +44,14 @@ interface PublishResult {
 // delivery. Every platform publishes via Composio execute (executeTool) —
 // Composio holds the real token server-side and permanently redacts raw tokens
 // since the May 2026 incident, so no raw-token path is usable.
-async function publishPost(id: number): Promise<{ published: boolean; results: PublishResult[] } | null> {
+async function publishPost(
+  id: number,
+  // Where to send the follow-up when a platform takes the post but doesn't
+  // finish it while we wait. Optional: without it (and without a
+  // CLAWNIFY_TOKEN) publishing still works, the unconfirmed channel just waits
+  // for the next delivery instead of arranging its own.
+  recheck?: { env: Env["Bindings"]; origin: string },
+): Promise<{ published: boolean; results: PublishResult[] } | null> {
   const post = await get<any>("SELECT * FROM posts WHERE id = ?", [id]);
   if (!post) return null;
 
@@ -145,12 +152,13 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
   // run's results: a retry only touches the channels that had not gone out,
   // and a concurrent delivery may have settled the rest. Re-reading is the
   // only view that covers both.
-  const states = await query<any>("SELECT status, ref FROM post_channels WHERE post_id = ?", [id]);
+  const states = await query<any>("SELECT status, ref, attempts FROM post_channels WHERE post_id = ?", [id]);
   const delivered = states.filter((s: any) => s.status === "published").length;
   // Two different pending rows. One carries a ref: the platform has the post
   // and hasn't ruled on it (TikTok). One doesn't: nothing has been sent, so
   // another delivery is holding it.
-  const awaiting = states.filter((s: any) => s.status === "pending" && s.ref).length;
+  const unconfirmed = states.filter((s: any) => s.status === "pending" && s.ref);
+  const awaiting = unconfirmed.length;
   const inFlight = states.filter((s: any) => s.status === "pending" && !s.ref).length;
   const rollup =
     delivered === states.length ? "published"
@@ -171,7 +179,52 @@ async function publishPost(id: number): Promise<{ published: boolean; results: P
      WHERE id = ?`,
     [rollup, delivered > 0 ? 1 : 0, id],
   );
+
+  // Something is still unconfirmed: come back to it. Nobody is watching this
+  // request by then, so the follow-up is a queued delivery, not work held open
+  // past the response — a Worker's waitUntil budget is 30s and its promises are
+  // dropped at the end of it, which is neither long enough for a video nor
+  // durable enough to rely on.
+  if (awaiting && recheck) {
+    await scheduleRecheck(recheck.env, recheck.origin, id, Math.max(...unconfirmed.map((s: any) => Number(s.attempts) || 1)));
+  }
   return { published: delivered > 0, results };
+}
+
+// How long to wait before asking the platform again, indexed by how many
+// deliveries this post has already had. Widening gaps: a video that needs a
+// minute is the common case, one still unresolved after half an hour is a
+// stuck one, and there is no point hammering either. The ladder runs out after
+// roughly an hour — past that the post keeps its unconfirmed row and the
+// author's retry button, rather than this rescheduling itself forever.
+//
+// It normally ends long before the ladder does: once TikTok forgets a
+// publish_id the status call answers invalid_publish_id, which is terminal (see
+// tiktok.ts), so the row settles on its own.
+const RECHECK_DELAYS_S = [60, 120, 300, 900, 1800];
+
+// Queue one follow-up delivery to this app's own /internal/publish. That
+// endpoint already runs publishPost, which re-checks an unconfirmed channel
+// instead of re-sending it — so the follow-up needs no new endpoint, no new
+// payload and no new idempotency story, and a redelivery of it is harmless.
+//
+// No-op without a CLAWNIFY_TOKEN (local dev, and any self-hosted deploy without
+// the managed queue). That is why the in-request poll in tiktok.ts still exists:
+// it is the confirmation those deployments get.
+async function scheduleRecheck(env: Env["Bindings"], origin: string, postId: number, tries: number): Promise<void> {
+  const token = env.CLAWNIFY_TOKEN;
+  const delay = RECHECK_DELAYS_S[tries - 1];
+  if (!token || delay === undefined) return;
+  // Deliberately not stored on posts.queue_job_id: that column tracks the
+  // post's scheduled publish, so overwriting it here would make editing the
+  // post cancel the wrong job. This one is fire-and-forget — the worst a stray
+  // delivery can do is re-check a channel that already settled.
+  await scheduleDelivery({
+    token,
+    origin,
+    postId,
+    runAt: new Date(Date.now() + delay * 1000).toISOString(),
+  });
 }
 
 // Re-check a delivery the platform accepted but never confirmed, rather than
@@ -1145,7 +1198,7 @@ app.post("/api/posts/:id/publish", async (c) => {
 
   // The post exists and has channels, so a null here means no channel had any
   // text to send — neither the shared draft nor its own version.
-  const result = await publishPost(id);
+  const result = await publishPost(id, { env: c.env, origin: new URL(c.req.url).origin });
   if (!result) return c.json({ error: "Post has no content" }, 400);
   return c.json(result);
 });
@@ -1175,7 +1228,7 @@ app.post("/api/internal/publish", async (c) => {
   // cancel a delivered job.
   await run("UPDATE posts SET queue_job_id = NULL WHERE id = ?", [post_id]);
 
-  const result = await publishPost(post_id);
+  const result = await publishPost(post_id, { env: c.env, origin: new URL(c.req.url).origin });
   if (!result) return c.json({ error: "post not found or empty" }, 404);
   // 200 so the queue marks the job done even if a channel rejected the content
   // (a platform-level rejection isn't a delivery failure to retry).
