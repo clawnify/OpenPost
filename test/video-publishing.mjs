@@ -161,4 +161,105 @@ section("The stored type is what decides, and it survives the round trip");
     h.sends.some((s) => s.toolSlug === "TIKTOK_POST_PHOTO"));
 }
 
+
+/**
+ * TikTok's Content Posting API is asynchronous: both the video upload and the
+ * photo post return once TikTok has *accepted* the job, and the post only
+ * appears after a download/transcode/moderation pass that can still reject it.
+ *
+ * A channel marked published is terminal — publishPost() never sends to it
+ * again — so believing that acceptance is what makes a post that failed
+ * moderation invisible forever. Everything below is about never doing that.
+ */
+
+section("A TikTok post is only published once TikTok says it is");
+{
+  const h = await boot();
+  const ch = await channels(h);
+  h.db.prepare("UPDATE channels SET profile_handle = ? WHERE id = ?").run("thespot", ch.tiktok.id);
+  const post = (await h.post("/api/posts", {
+    content: "our new spot",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const r = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
+
+  check("it asked TikTok what happened before calling it published", h.polls.length === 1, h.polls.join(","));
+  check("and it is published", r.success);
+  check("with a link to the post TikTok reported", r.url === "https://www.tiktok.com/@thespot/video/7500", r.url);
+}
+
+section("A TikTok post that fails moderation is a failed channel, not a delivered one");
+{
+  const h = await boot({ tiktokStatus: () => ({ status: "FAILED", fail_reason: "spam_risk_text" }) });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "buy now",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const r = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
+
+  check("the channel fails, and says what TikTok objected to",
+    !r.success && /flagged the caption as spam/.test(r.error), r.error);
+  check("the row is failed, so the author can fix the caption and retry",
+    h.row("SELECT status FROM post_channels WHERE post_id = ?", post.id).status === "failed");
+  check("the post is not marked published",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status !== "published");
+}
+
+section("A TikTok post left as an inbox draft is not a published post");
+{
+  const h = await boot({ tiktokStatus: () => ({ status: "SEND_TO_USER_INBOX" }) });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "draft",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: IMAGE, type: "image" }],
+  })).body;
+
+  const r = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
+  check("the photo path polls too — it is just as asynchronous", h.polls.length === 1);
+  check("and a draft is reported as one, not as a delivery",
+    !r.success && /left it as a draft/.test(r.error), r.error);
+}
+
+section("A TikTok post TikTok hasn't ruled on is re-checked, never re-sent");
+{
+  // TikTok never reaches a verdict on the first publish, then completes by the
+  // time the next delivery looks. This is the case that would double-post: the
+  // channel is not published, and re-initiating the same publish_id is exactly
+  // what TikTok's docs say never to do.
+  let verdict = { status: "PROCESSING_UPLOAD" };
+  const h = await boot({ tiktokStatus: () => verdict });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "still cooking",
+    channel_ids: [ch.tiktok.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const first = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
+  check("it is neither published nor failed", !first.success && first.pending === true);
+  check("and it says so plainly", /still processing/.test(first.error), first.error);
+
+  const row = h.row("SELECT status, ref, error FROM post_channels WHERE post_id = ?", post.id);
+  check("the row stays pending, holding the id TikTok gave us",
+    row.status === "pending" && row.ref === "tt-1", JSON.stringify(row));
+  check("the post reads partial, so the author still has a retry to press",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "partial",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status);
+
+  verdict = { status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7501"] };
+  const sendsBefore = h.sends.length;
+  const second = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
+
+  check("the next delivery confirms it instead of uploading again",
+    second.success && h.sends.length === sendsBefore, `${sendsBefore} -> ${h.sends.length}`);
+  check("and the post is published now",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "published");
+}
+
 report();

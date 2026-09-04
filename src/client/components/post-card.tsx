@@ -1,4 +1,4 @@
-import { Clock, Edit2, Trash2, Send, ExternalLink, AlertCircle } from "lucide-preact";
+import { Clock, Edit2, Trash2, Send, ExternalLink, AlertCircle, Hourglass } from "lucide-preact";
 import type { Post, Channel } from "../types";
 import { PLATFORM_LABELS } from "../types";
 import { PostPreview, hasNativePreview } from "./previews";
@@ -32,6 +32,18 @@ const STATUS_STYLES: Record<string, string> = {
 function ChannelChip({ ch }: { ch: Channel }) {
   const label = PLATFORM_LABELS[ch.platform] || ch.platform;
   const base = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white";
+
+  // Sent, and the platform hasn't ruled on it yet — TikTok only accepts a post
+  // synchronously, the verdict comes later. A pending row carrying a message is
+  // the one that has already gone out; a plain pending row hasn't. Showing them
+  // the same way would hide a post whose fate nobody knows.
+  if (ch.delivery_status === "pending" && ch.delivery_error) {
+    return (
+      <span class={`${base} opacity-75`} style={{ background: ch.color }} title={ch.delivery_error}>
+        {label} <Hourglass size={11} />
+      </span>
+    );
+  }
 
   if (ch.delivery_status === "failed") {
     return (

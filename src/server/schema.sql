@@ -55,7 +55,11 @@ CREATE TABLE IF NOT EXISTS post_channels (
   -- text, and only the channels the user actually tailored carry a row value.
   -- Empty is never stored: a blank override normalises to NULL (inherit).
   content TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',  -- pending | published | failed
+  -- pending | published | failed. `pending` covers both "not sent yet" and
+  -- "sent, and the platform hasn't ruled on it" — the second is the one with a
+  -- ref, which publishPost() re-checks instead of re-sending (TikTok's Content
+  -- Posting API only ever accepts a post synchronously).
+  status TEXT NOT NULL DEFAULT 'pending',
   ref TEXT,            -- platform post id (Postiz: releaseId)
   url TEXT,            -- link to the live post (Postiz: releaseURL)
   error TEXT,          -- platform rejection reason when status = 'failed'

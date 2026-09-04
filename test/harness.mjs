@@ -47,13 +47,22 @@ function storage(db) {
  */
 function broker(plan = {}) {
   const sends = [];
+  // Every status check the app made, so "did it confirm before calling this
+  // published" is a counted fact rather than something inferred.
+  const polls = [];
   const linkedinOk = plan.linkedinOk ?? (() => true);
   // TikTok's upload action can succeed while leaving the video unpublished — a
   // draft in the creator's inbox rather than a post on their profile. The
   // scenario picks which of the two happened.
   const tiktokPublished = plan.tiktokPublished ?? (() => true);
+  // TikTok only *accepts* a post synchronously; whether it went live is a
+  // separate status call, and the scenario decides what that call reports.
+  // Called once per poll, so a scenario can return PROCESSING_UPLOAD forever to
+  // reproduce a post the app never gets a verdict on.
+  const tiktokStatus = plan.tiktokStatus ?? (() => ({ status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7500"] }));
   return {
     sends,
+    polls,
     binding: {
       async getToken() { return null; },
       async listConnected() { return []; },
@@ -93,6 +102,13 @@ function broker(plan = {}) {
           case "TIKTOK_POST_PHOTO":
             sends.push({ service, toolSlug, text: args.description, images: args.photo_images });
             return { data: { publish_id: `tt-${sends.length}` }, error: null, successful: true };
+          case "TIKTOK_FETCH_PUBLISH_STATUS": {
+            // Not a send: asking TikTok what happened posts nothing. Composio
+            // wraps TikTok's body twice — data.data plus a sibling data.error.
+            polls.push(args.publish_id);
+            const body = tiktokStatus(args.publish_id, polls.length);
+            return { data: { data: body, error: { code: "ok", message: "", log_id: "l1" } }, error: null, successful: true };
+          }
           case "FACEBOOK_CREATE_VIDEO_POST":
             sends.push({ service, toolSlug, text: args.description, video: args.file_url });
             return { data: { id: `fbv-${sends.length}` }, error: null, successful: true };
@@ -132,6 +148,7 @@ export async function boot(plan) {
   return {
     db,
     sends: b.sends,
+    polls: b.polls,
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body ?? {}),
     put: (path, body) => send("PUT", path, body),
