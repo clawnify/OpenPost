@@ -1,7 +1,7 @@
 import { useEffect } from "preact/hooks";
 import { useApp } from "../context";
 import { PostCard } from "./post-card";
-import { ListOrdered } from "lucide-preact";
+import { ListOrdered, Plus, ArrowUpDown } from "lucide-preact";
 
 interface Props {
   navigate: (path: string) => void;
@@ -21,33 +21,37 @@ export function QueueView({ navigate }: Props) {
   const needsAttention = scheduled.filter((p) => p.status === "failed" || p.status === "partial").length;
 
   return (
-    <div class="p-6 max-w-4xl mx-auto">
-      <div class="flex items-center justify-between mb-6">
-        <div class="flex items-center gap-3">
-          <h1 class="text-xl font-semibold">Queue</h1>
-          <span class="text-sm text-muted-foreground">{scheduled.length} in queue</span>
-          {needsAttention > 0 && (
-            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-red-50 text-red-700">
-              {needsAttention} need attention
-            </span>
-          )}
-        </div>
+    <div class="p-6 max-w-[552px] mx-auto">
+      <div class="flex items-center justify-between h-14 -mt-6 -mx-6 px-6 mb-2 border-b border-border">
+        <h1 class="text-[1.375rem] font-semibold tracking-[-0.01em]">Queue</h1>
+        <button class="btn-primary" onClick={() => navigate("/compose")}>
+          <Plus size={16} /> New post
+        </button>
+      </div>
+      <div class="flex items-center gap-2 mb-4">
+        <span class="btn-ghost pointer-events-none">
+          <ArrowUpDown size={14} /> Sorted by <span class="text-foreground">Scheduled date</span>
+        </span>
+        <span class="text-[0.8125rem] text-muted-foreground tabular">{scheduled.length} in queue</span>
+        {needsAttention > 0 && (
+          <span class="pill bg-destructive-tint text-destructive">{needsAttention} need attention</span>
+        )}
       </div>
 
       {scheduled.length === 0 ? (
         <div class="flex flex-col items-center justify-center py-20 text-center">
-          <ListOrdered size={48} class="text-muted-foreground/40 mb-4" />
+          <ListOrdered size={48} class="text-faint mb-4" />
           <h3 class="text-lg font-semibold mb-1">Queue is empty</h3>
           <p class="text-muted-foreground mb-4">Schedule posts from the composer to see them here</p>
           <button
-            class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+            class="btn-primary"
             onClick={() => navigate("/compose")}
           >
             Compose
           </button>
         </div>
       ) : (
-        <div class="space-y-3">
+        <div class="space-y-8">
           {scheduled.map((p) => (
             <PostCard
               key={p.id}

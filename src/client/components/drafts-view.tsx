@@ -18,18 +18,18 @@ export function DraftsView({ navigate }: Props) {
     <div class="p-6 max-w-4xl mx-auto">
       <div class="flex items-center justify-between mb-6">
         <div class="flex items-center gap-3">
-          <h1 class="text-xl font-semibold">Drafts</h1>
+          <h1 class="text-[1.375rem] font-semibold tracking-[-0.01em]">Drafts</h1>
           <span class="text-sm text-muted-foreground">{drafts.length} drafts</span>
         </div>
       </div>
 
       {drafts.length === 0 ? (
         <div class="flex flex-col items-center justify-center py-20 text-center">
-          <FileText size={48} class="text-muted-foreground/40 mb-4" />
+          <FileText size={48} class="text-faint mb-4" />
           <h3 class="text-lg font-semibold mb-1">No drafts</h3>
           <p class="text-muted-foreground mb-4">Save a post as draft to come back to it later</p>
           <button
-            class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+            class="btn-primary"
             onClick={() => navigate("/compose")}
           >
             Compose

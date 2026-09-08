@@ -1,13 +1,16 @@
-import { useEffect, useMemo } from "preact/hooks";
+import { useEffect, useState, useMemo } from "preact/hooks";
 import { ChevronLeft, ChevronRight } from "lucide-preact";
 import { useApp } from "../context";
 import { PLATFORM_LABELS } from "../types";
+import { QuickEditDialog } from "./quick-edit-dialog";
+import type { Post } from "../types";
 
 interface Props {
   navigate: (path: string) => void;
 }
 
 export function CalendarView({ navigate }: Props) {
+  const [editing, setEditing] = useState<Post | null>(null);
   const { calendarData, calendarMonth, setCalendarMonth, loadCalendar } = useApp();
 
   useEffect(() => {
@@ -48,9 +51,9 @@ export function CalendarView({ navigate }: Props) {
   return (
     <div class="p-6 max-w-5xl mx-auto">
       <div class="flex items-center justify-between mb-6">
-        <h1 class="text-xl font-semibold">Calendar</h1>
+        <h1 class="text-[1.375rem] font-semibold tracking-[-0.01em]">Calendar</h1>
         <button
-          class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+          class="btn-primary"
           onClick={() => navigate("/compose")}
         >
           New Post
@@ -87,15 +90,15 @@ export function CalendarView({ navigate }: Props) {
             <div
               key={cell.key}
               class={`bg-card min-h-[100px] p-1.5 cursor-pointer hover:bg-accent/50 transition-colors ${
-                isToday ? "ring-2 ring-inset ring-blue-500" : ""
+                isToday ? "ring-1 ring-inset ring-accent" : ""
               }`}
               onClick={() => {
-                if (dayPosts.length > 0) navigate(`/compose/${dayPosts[0].id}`);
+                if (dayPosts.length > 0) setEditing(dayPosts[0]);
                 else navigate("/compose");
               }}
             >
               <span class={`inline-flex items-center justify-center w-6 h-6 text-xs rounded-full ${
-                isToday ? "bg-blue-600 text-white font-medium" : "text-foreground"
+                isToday ? "bg-accent text-accent-foreground font-medium" : "text-foreground"
               }`}>
                 {cell.day}
               </span>
@@ -104,7 +107,7 @@ export function CalendarView({ navigate }: Props) {
                   {dayPosts.slice(0, 3).map((p) => (
                     <div key={p.id} class="flex items-center gap-1 px-1 py-0.5 rounded text-[10px] bg-muted truncate">
                       {p.channels.length > 0 && (
-                        <span class="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: p.channels[0].color }} />
+                        <span class="brand-mark w-1.5 h-1.5 rounded-full shrink-0" style={{ "--brand": p.channels[0].color }} />
                       )}
                       <span class="truncate">{p.content.slice(0, 25) || "Post"}</span>
                     </div>
@@ -118,6 +121,7 @@ export function CalendarView({ navigate }: Props) {
           );
         })}
       </div>
+      <QuickEditDialog post={editing} onClose={() => setEditing(null)} navigate={navigate} />
     </div>
   );
 }
