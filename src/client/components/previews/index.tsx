@@ -1,5 +1,6 @@
 import type { Channel } from "../../types";
 import { PLATFORM_LABELS } from "../../types";
+import { PlatformIcon } from "../platform-icon";
 import { LinkedInPreview } from "./linkedin-preview";
 import { XPreview } from "./x-preview";
 import { InstagramPreview } from "./instagram-preview";
@@ -83,12 +84,6 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
   }
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 // Avatar strip to switch which selected channel's preview is shown.
 export function PreviewChannelTabs({
@@ -111,12 +106,12 @@ export function PreviewChannelTabs({
             type="button"
             onClick={() => onSelect(ch.id)}
             title={`${ch.name} · ${PLATFORM_LABELS[ch.platform] || ch.platform}`}
-            class={`w-9 h-9 rounded-full text-white flex items-center justify-center text-xs font-semibold transition-all ${
-              active ? "ring-2 ring-offset-2 ring-primary" : "opacity-50 hover:opacity-100"
+            class={`brand-soft relative w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold transition-all ${
+              active ? "ring-2 ring-offset-2 ring-foreground" : "opacity-60 hover:opacity-100"
             }`}
-            style={{ background: ch.color }}
+            style={{ "--brand": ch.color }}
           >
-            {initials(ch.name)}
+            <PlatformIcon platform={ch.platform} size={16} />
           </button>
         );
       })}

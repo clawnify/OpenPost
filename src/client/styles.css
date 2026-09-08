@@ -1,20 +1,94 @@
 @import "tailwindcss";
 
+/* Tokens follow the platform DESIGN.md (apps tier). Every chromatic value is
+   oklch(L, C, H) with L and C fixed per role (tint / text / solid) and only the
+   hue changing per meaning; every rendered pair is contrast-verified there. */
 @theme {
-  --color-background: #f8f9fa;
-  --color-foreground: #0f172a;
-  --color-card: #ffffff;
-  --color-card-foreground: #0f172a;
-  --color-muted: #f1f5f9;
-  --color-muted-foreground: #64748b;
-  --color-border: #e2e8f0;
-  --color-input: #e2e8f0;
-  --color-primary: #0f172a;
-  --color-primary-foreground: #f8fafc;
-  --color-accent: #f1f5f9;
-  --color-accent-foreground: #0f172a;
-  --color-destructive: #ef4444;
-  --color-ring: #94a3b8;
+  --color-background: oklch(1 0 0);
+  --color-foreground: oklch(0.22 0.002 85);
+  --color-card: oklch(1 0 0);
+  --color-card-foreground: oklch(0.22 0.002 85);
+  --color-muted: oklch(0.975 0.002 85);
+  --color-muted-foreground: oklch(0.5 0.005 85);
+  --color-faint: oklch(0.68 0.007 85);
+  --color-border: oklch(0.915 0.007 85);
+  --color-input: oklch(1 0 0);
+  --color-primary: oklch(0.22 0.002 85);
+  --color-primary-hover: oklch(0.30 0.003 85);
+  --color-primary-foreground: #ffffff;
+  --color-accent: oklch(0.6 0.204 15.7056);
+  --color-accent-hover: oklch(0.53 0.180 15.7056);
+  --color-accent-tint: oklch(0.955 0.013 15.7056);
+  --color-accent-text: oklch(0.44 0.123 15.7056);
+  --color-accent-foreground: #ffffff;
+  --color-info: oklch(0.44 0.211 265);
+  --color-info-tint: oklch(0.955 0.013 265);
+  --color-info-solid: oklch(0.6 0.184 265);
+  --color-success: oklch(0.44 0.081 152);
+  --color-success-tint: oklch(0.955 0.044 152);
+  --color-success-solid: oklch(0.6 0.134 152);
+  --color-warning: oklch(0.44 0.064 78);
+  --color-warning-tint: oklch(0.955 0.023 78);
+  --color-warning-solid: oklch(0.6 0.106 78);
+  --color-destructive: oklch(0.44 0.125 25);
+  --color-destructive-tint: oklch(0.955 0.013 25);
+  --color-destructive-solid: oklch(0.6 0.207 25);
+  --color-ring: oklch(0.6 0.204 15.7056);
+
+  --radius-xs: 0.25rem;
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;   /* cards */
+  --radius-lg: 1rem;      /* modals */
+  --radius-xl: 1.5rem;
+
+  /* Three edge recipes. Resting is an INSET ring: no layout cost, exact radius. */
+  --edge-rest: inset 0 0 0 1px var(--color-border);
+  --edge-raised: 0 0 2px rgba(28, 40, 64, 0.18), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --edge-float: 0 0 0 1px rgba(28, 40, 64, 0.04), 0 4px 8px -4px rgba(28, 40, 64, 0.12), 0 4px 12px -2px rgba(24, 41, 75, 0.16);
+  --shadow-solid: inset 0 0 0 1px rgba(0, 0, 0, 0.06), 0 2px 4px -2px rgba(20, 20, 20, 0.12);
+  /* utility names for the three edge recipes: shadow-edge / shadow-raised / shadow-float */
+  --shadow-edge: var(--edge-rest);
+  --shadow-raised: var(--edge-raised);
+  --shadow-float: var(--edge-float);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: oklch(0.17 0.002 85);
+    --color-foreground: oklch(0.95 0.002 85);
+    --color-card: oklch(0.2 0.002 85);
+    --color-card-foreground: oklch(0.95 0.002 85);
+    --color-muted: oklch(0.25 0.003 85);
+    --color-muted-foreground: oklch(0.8 0.007 85);
+    --color-faint: oklch(0.6 0.006 85);
+    --color-border: oklch(0.3 0.003 85);
+    --color-input: oklch(0.2 0.002 85);
+    --color-primary: oklch(0.95 0.002 85);
+    --color-primary-hover: oklch(0.88 0.003 85);
+    --color-primary-foreground: oklch(0.17 0.002 85);
+    --color-accent: oklch(0.62 0.198 15.7056);
+    --color-accent-hover: oklch(0.72 0.141 15.7056);
+    --color-accent-tint: oklch(0.27 0.049 15.7056);
+    --color-accent-text: oklch(0.82 0.056 15.7056);
+    --color-accent-foreground: #ffffff;
+    --color-info: oklch(0.82 0.049 265);
+    --color-info-tint: oklch(0.27 0.083 265);
+    --color-info-solid: oklch(0.62 0.163 265);
+    --color-success: oklch(0.82 0.119 152);
+    --color-success-tint: oklch(0.27 0.032 152);
+    --color-success-solid: oklch(0.62 0.130 152);
+    --color-warning: oklch(0.82 0.093 78);
+    --color-warning-tint: oklch(0.27 0.025 78);
+    --color-warning-solid: oklch(0.62 0.103 78);
+    --color-destructive: oklch(0.82 0.055 25);
+    --color-destructive-tint: oklch(0.27 0.049 25);
+    --color-destructive-solid: oklch(0.62 0.201 25);
+    --color-ring: oklch(0.62 0.198 15.7056);
+    /* Dark: the drops vanish, the ring carries every level. */
+    --edge-raised: inset 0 0 0 1px var(--color-border);
+    --edge-float: inset 0 0 0 1px var(--color-border);
+    --shadow-solid: none;
+  }
 }
 
 /* ── Base ──────────────────────────────────────────────────────────── */
@@ -23,19 +97,87 @@ html, body, #app {
 }
 
 body {
-  @apply bg-background text-foreground text-sm antialiased;
+  @apply bg-background text-foreground antialiased;
+  font-size: 0.9375rem;
+  line-height: 1.5;
   font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* ── Recipes (DESIGN.md components) ───────────────────────────────── */
+.card { @apply bg-card rounded-md; box-shadow: var(--edge-rest); }
+.card-title { @apply text-[1.0625rem] font-semibold leading-tight; }
+.list-row { @apply flex items-center gap-3 h-12 px-3 -mx-3 rounded-sm hover:bg-muted transition-colors; }
+.list-row + .list-row { position: relative; }
+.list-row + .list-row::before {
+  content: "";
+  position: absolute;
+  left: 0.75rem;
+  right: 0.75rem;
+  top: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.btn-primary { @apply inline-flex items-center justify-center gap-1.5 h-7 rounded-sm text-sm font-medium transition-colors whitespace-nowrap pl-1.5 pr-2 bg-primary text-primary-foreground hover:bg-primary-hover; box-shadow: var(--shadow-solid); }
+.btn-secondary { @apply inline-flex items-center justify-center gap-1.5 h-7 rounded-sm text-sm font-medium transition-colors whitespace-nowrap pl-1.5 pr-2 bg-card text-foreground hover:bg-muted; box-shadow: var(--edge-raised); }
+.btn-ghost { @apply inline-flex items-center justify-center gap-1.5 h-7 rounded-sm text-sm font-medium transition-colors whitespace-nowrap px-2 text-muted-foreground hover:bg-muted hover:text-foreground; }
+.icon-btn { @apply inline-flex items-center justify-center size-7 rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground transition-colors; }
+
+.input { @apply w-full h-8 px-3 rounded-sm bg-card text-foreground placeholder:text-faint outline-none transition-shadow; box-shadow: var(--edge-rest); }
+.input:focus { box-shadow: inset 0 0 0 1px var(--color-ring), 0 0 0 3px var(--color-accent-tint); }
+
+.chip { @apply inline-flex items-center gap-1 px-2 py-1 rounded-xs text-xs bg-muted text-muted-foreground; }
+.pill { @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium; }
+
+.group-header { @apply flex items-center gap-2 px-4 py-1.5 bg-muted text-[0.8125rem] font-medium text-muted-foreground; }
+/* Stretched (w-full) buttons centre their content and drop the leading-icon
+   nudge, which is an optical fix for a hug-width button only. */
+.btn-primary.w-full, .btn-secondary.w-full, .btn-ghost.w-full { @apply px-3; }
+
+.stat-label { @apply text-[0.6875rem] font-semibold uppercase tracking-[0.06em] text-muted-foreground; }
+.stat { @apply text-[2rem] font-semibold leading-none tracking-[-0.02em]; font-variant-numeric: tabular-nums; }
+
+/* A third-party brand colour (--brand, the raw hex from the data) contributes
+   only its HUE, and only ever at tint strength: a light tint background, the
+   hue as a 1px ring, the hue as text. Never a solid saturated fill — importing
+   another company's brand saturation puts a paint chart on our surface, and at
+   six channels the page stops reading as one product. Same shape as our status
+   badges, so a channel and a status sit next to each other without competing. */
+.brand-soft {
+  background: oklch(from var(--brand) 0.965 0.02 h);
+  color: oklch(from var(--brand) 0.44 0.11 h);
+  box-shadow: inset 0 0 0 1px oklch(from var(--brand) 0.6 0.12 h / 0.28);
+}
+.brand-pill { background: oklch(from var(--brand) 0.965 0.02 h); color: oklch(from var(--brand) 0.44 0.11 h); }
+/* The one place a brand hue may be solid: a mark that IS data (a chart series,
+   a legend dot), and even then at our `solid` role rather than the raw hex. */
+.brand-mark { background: oklch(from var(--brand) 0.6 0.14 h); }
+@media (prefers-color-scheme: dark) {
+  .brand-soft {
+    background: oklch(from var(--brand) 0.27 0.05 h);
+    color: oklch(from var(--brand) 0.82 0.07 h);
+    box-shadow: inset 0 0 0 1px oklch(from var(--brand) 0.62 0.10 h / 0.35);
+  }
+  .brand-pill { background: oklch(from var(--brand) 0.27 0.05 h); color: oklch(from var(--brand) 0.82 0.07 h); }
+  .brand-mark { background: oklch(from var(--brand) 0.62 0.13 h); }
+}
+
+.app-icon { @apply inline-flex items-center justify-center rounded-md bg-accent text-accent-foreground shrink-0; }
 
 /* ── Scrollbar ─────────────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { @apply bg-gray-300 rounded-full; }
-::-webkit-scrollbar-thumb:hover { @apply bg-gray-400; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-faint); }
 
 /* ── Calendar grid ─────────────────────────────────────────────────── */
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  @apply gap-px bg-border rounded-lg overflow-hidden border border-border;
+  @apply gap-px bg-border rounded-lg overflow-hidden;
+}
+
+@media (max-width: 767px) {
+  input, select, textarea { font-size: 16px !important; }
 }
