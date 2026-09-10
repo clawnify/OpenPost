@@ -48,8 +48,11 @@ export function useAppState() {
     } catch (e: any) { setError(e.message); }
   }, []);
 
+  // Stats ride along at boot because the sidebar's queue/drafts badges read
+  // them, and those have to be right on whichever screen the app opens at —
+  // `posts` is filtered per view, so it cannot be counted for this.
   useEffect(() => {
-    Promise.all([loadChannels(), loadLabels(), loadPosts()]).then(() => setLoading(false));
+    Promise.all([loadChannels(), loadLabels(), loadPosts(), loadStats()]).then(() => setLoading(false));
   }, []);
 
   // ── Channel CRUD ──

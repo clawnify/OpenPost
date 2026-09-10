@@ -4,21 +4,24 @@ import type { View } from "../types";
 interface RouterState {
   view: View;
   editId: number | null;
+  // The location itself, so the host bridge can report it verbatim.
+  path: string;
 }
 
 function parseLocation(): RouterState {
   const path = window.location.pathname;
-  if (path === "/calendar") return { view: "calendar", editId: null };
-  if (path === "/queue") return { view: "queue", editId: null };
-  if (path === "/drafts") return { view: "drafts", editId: null };
-  if (path === "/channels") return { view: "channels", editId: null };
-  if (path === "/analytics") return { view: "analytics", editId: null };
-  if (path === "/compose") return { view: "compose", editId: null };
+  const here = path + window.location.search;
+  if (path === "/calendar") return { view: "calendar", editId: null, path: here };
+  if (path === "/queue") return { view: "queue", editId: null, path: here };
+  if (path === "/drafts") return { view: "drafts", editId: null, path: here };
+  if (path === "/channels") return { view: "channels", editId: null, path: here };
+  if (path === "/analytics") return { view: "analytics", editId: null, path: here };
+  if (path === "/compose") return { view: "compose", editId: null, path: here };
   if (path.startsWith("/compose/")) {
     const id = Number(path.split("/")[2]);
-    return { view: "compose", editId: isNaN(id) ? null : id };
+    return { view: "compose", editId: isNaN(id) ? null : id, path: here };
   }
-  return { view: "dashboard", editId: null };
+  return { view: "dashboard", editId: null, path: here };
 }
 
 export function useRouter() {
@@ -35,5 +38,5 @@ export function useRouter() {
     setState(parseLocation());
   }, []);
 
-  return { view: state.view, editId: state.editId, navigate };
+  return { view: state.view, editId: state.editId, path: state.path, navigate };
 }
