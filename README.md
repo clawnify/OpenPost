@@ -74,13 +74,13 @@ Publishing runs through the accounts connected in Clawnify -- no API keys in the
 ## Architecture
 
 ```
+schema.sql          -- Database schema (channels, posts, labels, media)
 src/
   server/
     index.ts        -- Hono API with D1 + credentials middleware
     db.ts           -- D1-native database adapter
     credentials.ts  -- Credential service binding adapter (prod + local fallback)
     twitter.ts      -- X API v2 client (OAuth 2.0 Bearer + OAuth 1.0a)
-    schema.sql      -- Database schema (channels, posts, labels, media)
   client/
     app.tsx              -- Root component with router
     context.tsx          -- Preact context for app state

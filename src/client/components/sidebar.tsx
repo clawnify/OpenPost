@@ -1,6 +1,19 @@
 import { useState } from "preact/hooks";
+import { AppNav, embedded } from "@clawnify/app/client";
 import { LayoutDashboard, PenSquare, Calendar, ListOrdered, FileText, Radio, BarChart3, PanelLeft } from "lucide-preact";
 import type { View } from "../types";
+
+// Inside the Clawnify workspace the host draws these sections in its own
+// sidebar (icon names from the host's library).
+const HOST_ICONS: Record<View, string> = {
+  dashboard: "layout-dashboard",
+  compose: "message-square",
+  calendar: "calendar",
+  queue: "list",
+  drafts: "file-text",
+  channels: "globe",
+  analytics: "bar-chart-3",
+};
 
 const NAV: Array<{ view: View; path: string; label: string; icon: any }> = [
   { view: "dashboard", path: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -22,6 +35,26 @@ interface Props {
 // fill, and a collapse toggle that folds it to icons only.
 export function Sidebar({ currentView, navigate }: Props) {
   const [collapsed, setCollapsed] = useState(false);
+
+  if (embedded) {
+    return (
+      <AppNav
+        title="Post"
+        icon="send"
+        active={currentView}
+        groups={[{
+          items: NAV.map((item) => ({
+            id: item.view,
+            label: item.label,
+            href: item.path,
+            icon: HOST_ICONS[item.view],
+            home: item.view === "dashboard",
+          })),
+        }]}
+        onNavigate={(item) => item.href && navigate(item.href)}
+      />
+    );
+  }
 
   return (
     <aside
