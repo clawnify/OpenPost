@@ -96,8 +96,10 @@ export function useAppState() {
   const syncChannelProfile = useCallback(async (id: number) => {
     try {
       await api("POST", `/api/channels/${id}/sync-profile`);
-      await loadChannels();
     } catch (e: any) { setError(e.message); }
+    // Reload either way: a refused sync still clears a profile that belonged
+    // to another account.
+    await loadChannels();
   }, [loadChannels]);
 
   const deleteChannel = useCallback(async (id: number) => {

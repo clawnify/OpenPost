@@ -70,7 +70,10 @@ export function ChannelList() {
     if (!name.trim()) return;
     const data = {
       name: name.trim(), platform, handle: handle.trim(), color,
-      platform_account_id: platform === "facebook" ? accountId.trim() || null : null,
+      // Only Facebook's Page is picked here. Every other platform's account id
+      // is resolved from its connection and must survive an edit — sending null
+      // for them wiped the Instagram account a channel was tied to.
+      ...(platform === "facebook" ? { platform_account_id: accountId.trim() || null } : {}),
     };
     if (editingId) {
       await updateChannel(editingId, data);
