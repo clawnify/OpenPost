@@ -1,11 +1,13 @@
 import { useState } from "preact/hooks";
 import { Globe, MoreHorizontal, X, ThumbsUp, MessageCircle, Forward } from "lucide-preact";
+import type { MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   pageName: string;
   avatarUrl?: string;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -25,7 +27,7 @@ const ACTIONS = [
   { Icon: Forward, label: "Share" },
 ];
 
-export function FacebookPreview({ pageName, avatarUrl, content, imageUrl, timeLabel }: Props) {
+export function FacebookPreview({ pageName, avatarUrl, content, media, timeLabel }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const isLong = content.length > COLLAPSE_AT || content.split("\n").length > 5;
@@ -69,10 +71,8 @@ export function FacebookPreview({ pageName, avatarUrl, content, imageUrl, timeLa
         )}
       </div>
 
-      {/* Image */}
-      {imageUrl && (
-        <img src={imageUrl} alt="" class="w-full max-h-[500px] object-cover bg-[#f0f2f5]" />
-      )}
+      {/* Attachment */}
+      <PreviewMedia media={media} class="w-full max-h-[500px] object-cover bg-[#f0f2f5]" />
 
       {/* Action bar */}
       <div class="mx-4 mt-1 border-t border-[#ced0d4] flex items-center justify-around py-1">

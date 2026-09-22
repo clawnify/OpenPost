@@ -1,3 +1,7 @@
+# esbuild and workerd need their install scripts to produce a usable binary;
+# sharp is an optional image dependency nothing here uses. pnpm 11 leaves this
+# key as an unanswered stub on first install and refuses to install until it's
+# decided.
 allowBuilds:
   esbuild: true
   sharp: false

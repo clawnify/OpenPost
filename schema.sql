@@ -50,11 +50,24 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE TABLE IF NOT EXISTS post_channels (
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'pending',  -- pending | published | failed
+  -- This channel's own version of the text. NULL means "use posts.content" —
+  -- the shared draft — so a post nobody customized keeps exactly one body of
+  -- text, and only the channels the user actually tailored carry a row value.
+  -- Empty is never stored: a blank override normalises to NULL (inherit).
+  content TEXT,
+  -- pending | published | failed. `pending` covers both "not sent yet" and
+  -- "sent, and the platform hasn't ruled on it" — the second is the one with a
+  -- ref, which publishPost() re-checks instead of re-sending (TikTok and
+  -- Facebook video only ever accept a post synchronously).
+  status TEXT NOT NULL DEFAULT 'pending',
   ref TEXT,            -- platform post id (Postiz: releaseId)
   url TEXT,            -- link to the live post (Postiz: releaseURL)
   error TEXT,          -- platform rejection reason when status = 'failed'
   published_at TEXT,
+  -- Delivery attempts, and the claim token that makes publishing re-entrant:
+  -- publishPost() bumps this with a compare-and-swap before it sends, so two
+  -- concurrent deliveries of the same post (the queue is at-least-once) can
+  -- never both send to this channel. See publishPost() in src/server/index.ts.
   attempts INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (post_id, channel_id)
 );
@@ -66,7 +79,12 @@ CREATE TABLE IF NOT EXISTS post_labels (
   PRIMARY KEY (post_id, label_id)
 );
 
--- Media attachments
+-- Media attachments. `type` is 'image' or 'video' and decides which platform
+-- call publishes the post — an images post and a video post go to different
+-- endpoints on every platform that takes both. A post carries either images or
+-- one video, never a mix (mediaShapeError in src/shared/platforms.ts); the rule
+-- lives in code rather than in a constraint because the composer has to explain
+-- it while the attachments are still removable.
 CREATE TABLE IF NOT EXISTS media (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
