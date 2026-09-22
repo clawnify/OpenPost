@@ -118,7 +118,6 @@ src/
       use-app.ts         -- State management + CRUD operations
       use-router.ts      -- pushState URL router
     components/
-      sidebar.tsx        -- Navigation sidebar
       dashboard.tsx      -- Stats cards + upcoming posts
       post-composer.tsx  -- Multi-channel post editor with char limits
       calendar-view.tsx  -- Month grid calendar
