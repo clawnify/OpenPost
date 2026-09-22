@@ -348,7 +348,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
     case "instagram": {
       // Composio execute, two-step: create media container → publish it.
       // IG requires a Business account, an image, and the IG Business Account
-      // ID (resolved from the connection, see resolveInstagramAccountId).
+      // ID (resolved from the connection, see resolveInstagramAccount).
       //
       // One image is a plain container; two or more is a carousel, which takes
       // its children as URLs directly (no per-child container round-trip). Both
@@ -358,8 +358,9 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
       // used to call — are both marked deprecated in Composio's catalogue, and
       // the carousel container has no deprecated publish partner anyway.
       if (!imageUrls.length) return { ...base, success: false, error: "Instagram requires an image." };
-      const igUserId = await resolveInstagramAccountId(channel);
-      if (!igUserId) return { ...base, success: false, error: "No Instagram credentials. Connect Instagram in Clawnify." };
+      const ig = await resolveInstagramAccount(channel);
+      if ("error" in ig) return { ...base, success: false, error: ig.error };
+      const igUserId = ig.id;
       const container =
         imageUrls.length === 1
           ? await executeTool("instagram", "INSTAGRAM_POST_IG_USER_MEDIA", {
@@ -668,14 +669,88 @@ function accountId(channel: any): string | undefined {
 // connected account for itself (INSTAGRAM_GET_USER_INFO with no id returns
 // the current user) and persist it. Null off-platform or when Instagram isn't
 // connected — the caller turns that into a per-channel failure.
-async function resolveInstagramAccountId(channel: any): Promise<string | null> {
+// The @handle an Instagram channel was set up with, normalised; empty when the
+// author left it blank.
+function instagramHandle(channel: any): string {
+  return String(channel.handle || "").trim().replace(/^@/, "").toLowerCase();
+}
+
+// The Instagram account a channel publishes as, checked against the one the
+// org's connection can actually reach.
+//
+// Instagram connects through Instagram Login (instagram_business_* scopes),
+// and a token from it belongs to exactly one professional account — unlike a
+// Facebook login, it can't reach any other. So every Instagram channel in an
+// org publishes through the same single account. This used to resolve a
+// channel without a stored account by asking the connection who it is and
+// saving the answer, so a second Instagram channel silently became a copy of
+// the first: its profile synced as the other account, and its posts went there.
+//
+// Now the account is claimed once and checked every time. The first channel to
+// resolve claims the connected account; any other channel that would resolve
+// to it, or that was set up as an account the connection isn't, is refused with
+// the reason. `conflict` marks those refusals, as opposed to the connection
+// simply being unavailable.
+type InstagramAccount = { id: string; username?: string; picture?: string; bio?: string };
+
+async function resolveInstagramAccount(
+  channel: any,
+): Promise<InstagramAccount | { error: string; conflict?: true }> {
+  const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", {
+    ig_user_id: "me",
+    fields: "id,username,profile_picture_url,biography",
+  });
+  const d = r?.successful ? ((r.data as any) || {}) : null;
+  if (!d?.id) return { error: "No Instagram credentials. Connect Instagram in Clawnify." };
+  const me: InstagramAccount = {
+    id: String(d.id),
+    username: d.username || undefined,
+    picture: d.profile_picture_url || undefined,
+    bio: d.biography || undefined,
+  };
+  const who = me.username ? `@${me.username}` : "the connected account";
   const stored = accountId(channel);
-  if (stored) return stored;
-  const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", {});
-  const id = r?.successful ? ((r.data as any)?.id as string | undefined) : undefined;
-  if (!id) return null;
-  await run("UPDATE channels SET platform_account_id = ? WHERE id = ?", [id, channel.id]);
-  return id;
+
+  // The handle the author typed is the channel's own statement of which
+  // account it is. When it names someone other than the connected account,
+  // the channel can't publish, and an account stamped onto it by the old
+  // resolve-and-save is cleared rather than left to block the real owner.
+  const named = instagramHandle(channel);
+  if (named && me.username && named !== me.username.toLowerCase()) {
+    if (stored === me.id) await run("UPDATE channels SET platform_account_id = NULL WHERE id = ?", [channel.id]);
+    return {
+      conflict: true,
+      error: `This channel is @${named}, but Instagram is connected as ${who}. One Instagram connection is one account: reconnect Instagram as @${named} to publish to it.`,
+    };
+  }
+  if (stored && stored !== me.id) {
+    return {
+      conflict: true,
+      error: `This channel is a different Instagram account from the one connected (${who}). One Instagram connection is one account: reconnect Instagram as this channel's account to publish to it.`,
+    };
+  }
+
+  // Two channels on one account means one of them is posting somewhere its
+  // author didn't mean. The first to claim it keeps it — unless its handle says
+  // it is someone else, in which case it was never the owner.
+  const claimants = await query<any>(
+    `SELECT id, name, handle FROM channels
+      WHERE platform = 'instagram' AND id != ? AND platform_account_id = ?
+      ORDER BY id ASC`,
+    [channel.id, me.id],
+  );
+  const owner = claimants.find((c: any) => {
+    const h = instagramHandle(c);
+    return !h || !me.username || h === me.username.toLowerCase();
+  });
+  if (owner && (!stored || owner.id < channel.id)) {
+    return {
+      conflict: true,
+      error: `${who} is already the "${owner.name}" channel. One Instagram connection is one account, so this channel has no account of its own to publish as.`,
+    };
+  }
+  if (!stored) await run("UPDATE channels SET platform_account_id = ? WHERE id = ?", [me.id, channel.id]);
+  return me;
 }
 
 // Permalink for a Graph API post id. Composite ids ("<page>_<post>") map to
@@ -726,7 +801,7 @@ interface ChannelProfile {
 // Fetch the live platform profile for a channel via Composio so previews render
 // the real name / photo / @handle / headline. Returns null when the platform
 // has no profile fetch, isn't connected, or the call fails (off-platform too).
-async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null> {
+async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { conflict: string } | null> {
   try {
     switch (channel.platform) {
       case "linkedin": {
@@ -756,16 +831,16 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
         };
       }
       case "instagram": {
-        const igUserId = await resolveInstagramAccountId(channel);
-        if (!igUserId) return null;
-        const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", { ig_user_id: igUserId });
-        if (!r?.successful) return null;
-        const d = (r.data as any) || {};
+        // The profile is the resolved account's own — never whichever account
+        // the connection happens to be, which is how two channels ended up
+        // showing the same person.
+        const ig = await resolveInstagramAccount(channel);
+        if ("error" in ig) return ig.conflict ? { conflict: ig.error } : null;
         return {
-          profile_name: d.username || null,
-          profile_handle: d.username || null,
-          profile_avatar_url: d.profile_picture_url || null,
-          profile_headline: d.biography || null,
+          profile_name: ig.username || null,
+          profile_handle: ig.username || null,
+          profile_avatar_url: ig.picture || null,
+          profile_headline: ig.bio || null,
         };
       }
       case "tiktok": {
@@ -812,10 +887,20 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | null>
 
 // Fetch + persist the platform profile onto a channel row. Returns the updated
 // row (or the unchanged row when the fetch yields nothing).
-async function syncChannelProfile(id: number): Promise<any | null> {
+async function syncChannelProfile(id: number): Promise<{ row: any; error?: string } | null> {
   const channel = await get<any>("SELECT * FROM channels WHERE id = ?", [id]);
   if (!channel) return null;
   const profile = await fetchChannelProfile(channel);
+  if (profile && "conflict" in profile) {
+    // The stored profile described an account this channel isn't (or can't
+    // reach), so it goes rather than keep showing someone else's face.
+    await run(
+      `UPDATE channels SET profile_name = NULL, profile_handle = NULL, profile_avatar_url = NULL,
+         profile_headline = NULL, profile_synced_at = datetime('now') WHERE id = ?`,
+      [id],
+    );
+    return { row: await get<any>("SELECT * FROM channels WHERE id = ?", [id]), error: profile.conflict };
+  }
   if (profile) {
     await run(
       `UPDATE channels SET profile_name = ?, profile_handle = ?, profile_avatar_url = ?,
@@ -823,7 +908,7 @@ async function syncChannelProfile(id: number): Promise<any | null> {
       [profile.profile_name, profile.profile_handle, profile.profile_avatar_url, profile.profile_headline, id],
     );
   }
-  return get<any>("SELECT * FROM channels WHERE id = ?", [id]);
+  return { row: await get<any>("SELECT * FROM channels WHERE id = ?", [id]) };
 }
 
 const app = createApp<Env>({
@@ -922,16 +1007,19 @@ app.post("/api/channels", async (c) => {
   // Pull the real platform profile so previews are accurate from the start.
   // Best-effort: a failed sync still returns the created channel.
   const row =
-    (await syncChannelProfile(id)) ?? (await get("SELECT * FROM channels WHERE id = ?", [id]));
+    (await syncChannelProfile(id))?.row ?? (await get("SELECT * FROM channels WHERE id = ?", [id]));
   return c.json(row, 201);
 });
 
 // Re-sync a channel's cached platform profile on demand.
 app.post("/api/channels/:id/sync-profile", async (c) => {
   const id = Number(c.req.param("id"));
-  const row = await syncChannelProfile(id);
-  if (!row) return c.json({ error: "Not found" }, 404);
-  return c.json(row);
+  const synced = await syncChannelProfile(id);
+  if (!synced) return c.json({ error: "Not found" }, 404);
+  // 409 so the dashboard's error banner says why, instead of the card quietly
+  // showing nothing.
+  if (synced.error) return c.json({ error: synced.error }, 409);
+  return c.json(synced.row);
 });
 
 app.put("/api/channels/:id", async (c) => {

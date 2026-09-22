@@ -63,6 +63,9 @@ function broker(plan = {}) {
   // Facebook video is accepted the same way: the Page's video list then says
   // ready / processing / error. null means the video isn't listed at all.
   const facebookVideoStatus = plan.facebookVideoStatus ?? (() => "ready");
+  // The one account the org's Instagram connection signs in as (Instagram
+  // Login: one token, one account). null means Instagram isn't connected.
+  const instagramMe = plan.instagramMe ?? (() => ({ id: "ig-100", username: "rubenlen10" }));
   const fbVideos = [];
   return {
     sends,
@@ -96,6 +99,19 @@ function broker(plan = {}) {
           case "LINKEDIN_CREATE_LINKED_IN_POST":
             sends.push({ service, toolSlug, text: args.commentary, images: args.images });
             return { data: { x_restli_id: `li-${sends.length}` }, error: null, successful: true };
+          case "INSTAGRAM_GET_USER_INFO": {
+            const me = instagramMe();
+            return me
+              ? { data: { ...me, profile_picture_url: `https://pics.example/${me.username}.jpg`, biography: `${me.username} bio` }, error: null, successful: true }
+              : { data: null, error: "Instagram is not connected", successful: false };
+          }
+          case "INSTAGRAM_POST_IG_USER_MEDIA":
+          case "INSTAGRAM_CREATE_CAROUSEL_CONTAINER":
+            // Not a send: a container is a draft until it is published.
+            return { data: { id: `container-${args.ig_user_id}` }, error: null, successful: true };
+          case "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH":
+            sends.push({ service, toolSlug, account: args.ig_user_id });
+            return { data: { id: `igpost-${sends.length}` }, error: null, successful: true };
           case "TIKTOK_UPLOAD_VIDEO":
             sends.push({ service, toolSlug, text: args.caption, video: args.file_to_upload?.staged });
             return {
