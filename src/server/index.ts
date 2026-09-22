@@ -53,6 +53,12 @@ async function publishPost(
   // CLAWNIFY_TOKEN) publishing still works, the unconfirmed channel just waits
   // for the next delivery instead of arranging its own.
   recheck?: { env: Env["Bindings"]; origin: string },
+  // "deliver" sends every channel that hasn't gone out: the scheduled delivery
+  // and the author's Publish / Retry. "recheck" only asks the platforms about
+  // channels they accepted but never confirmed, and touches nothing else — it is
+  // what the queued follow-up runs, and the author may have edited, rescheduled
+  // or added channels since the post first went out.
+  mode: "deliver" | "recheck" = "deliver",
 ): Promise<{ published: boolean; results: PublishResult[] } | null> {
   const post = await get<any>("SELECT * FROM posts WHERE id = ?", [id]);
   if (!post) return null;
@@ -103,6 +109,11 @@ async function publishPost(
       continue;
     }
 
+    // A re-check leaves alone every channel that isn't waiting on a platform's
+    // verdict: a failed one waits for the author's Retry, and a new or
+    // rescheduled one waits for its own delivery.
+    if (mode === "recheck" && !(channel.delivery_status === "pending" && channel.delivery_ref)) continue;
+
     // Claim the channel before sending: bump attempts only if it still holds
     // the value we read. Two deliveries racing each other both read the same
     // attempts, both try the swap, and exactly one wins — the loser skips
@@ -125,9 +136,9 @@ async function publishPost(
     // pending row that already carries a ref). Ask what became of it instead of
     // sending again — a second upload is a second post (TikTok's docs say it
     // outright), and only the platforms in CONFIRMERS produce such a row.
-    const r =
-      (await recheckChannel(channel, base)) ??
-      (await publishToChannel(channel, channelContent(channel, post.content), media));
+    const checked = await recheckChannel(channel, base);
+    if (!checked && mode === "recheck") continue;
+    const r = checked ?? (await publishToChannel(channel, channelContent(channel, post.content), media));
     // Persist this channel's delivery outcome on its post_channels row.
     // attempts was already incremented by the claim above. `pending` is a third
     // outcome, not a failure: the platform has the post and hasn't ruled on it,
@@ -205,10 +216,11 @@ async function publishPost(
 // tiktok.ts), so the row settles on its own.
 const RECHECK_DELAYS_S = [60, 120, 300, 900, 1800];
 
-// Queue one follow-up delivery to this app's own /internal/publish. That
-// endpoint already runs publishPost, which re-checks an unconfirmed channel
-// instead of re-sending it — so the follow-up needs no new endpoint, no new
-// payload and no new idempotency story, and a redelivery of it is harmless.
+// Queue one follow-up to this app's own /internal/publish, marked as a
+// re-check. The mark matters: an unmarked delivery is a full publish, which
+// sends every channel that hasn't gone out and clears posts.queue_job_id — right
+// for the scheduled delivery, wrong an hour later, when the author may have
+// rescheduled the post or added channels to it.
 //
 // No-op without a CLAWNIFY_TOKEN (local dev, and any self-hosted deploy without
 // the managed queue). That is why the in-request poll in tiktok.ts still exists:
@@ -226,6 +238,7 @@ async function scheduleRecheck(env: Env["Bindings"], origin: string, postId: num
     origin,
     postId,
     runAt: new Date(Date.now() + delay * 1000).toISOString(),
+    recheck: true,
   });
 }
 
@@ -1397,14 +1410,19 @@ app.post("/api/internal/publish", async (c) => {
   });
   if (!valid) return c.json({ error: "invalid signature" }, 401);
 
-  const { post_id } = JSON.parse(raw || "{}") as { post_id?: number };
+  const { post_id, recheck } = JSON.parse(raw || "{}") as { post_id?: number; recheck?: boolean };
   if (!post_id) return c.json({ error: "post_id required" }, 400);
 
-  // The job already fired — clear its id so reconciliation doesn't try to
-  // cancel a delivered job.
-  await run("UPDATE posts SET queue_job_id = NULL WHERE id = ?", [post_id]);
+  // The post's scheduled job fired — clear its id so reconciliation doesn't try
+  // to cancel a delivered job. A re-check is not that job, and the column may
+  // now hold a newer one if the author rescheduled the post.
+  if (!recheck) await run("UPDATE posts SET queue_job_id = NULL WHERE id = ?", [post_id]);
 
-  const result = await publishPost(post_id, { env: c.env, origin: new URL(c.req.url).origin });
+  const result = await publishPost(
+    post_id,
+    { env: c.env, origin: new URL(c.req.url).origin },
+    recheck ? "recheck" : "deliver",
+  );
   if (!result) return c.json({ error: "post not found or empty" }, 404);
   // 200 so the queue marks the job done even if a channel rejected the content
   // (a platform-level rejection isn't a delivery failure to retry).

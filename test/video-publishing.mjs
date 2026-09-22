@@ -284,6 +284,8 @@ section("An unconfirmed TikTok post arranges its own follow-up");
   check("aimed at the endpoint that re-checks, carrying this post",
     /\/api\/internal\/publish$/.test(job.target_url || "") && job.payload?.post_id === post.id,
     JSON.stringify(job));
+  check("marked as a re-check, with a key that can't collide with the scheduled delivery",
+    job.payload?.recheck === true && /^recheck:/.test(job.idempotency_key || ""), JSON.stringify(job));
   check("a minute out, not immediately",
     Math.round((Date.parse(job.run_at) - Date.now()) / 1000) >= 55, job.run_at);
   check("and the schedule column is untouched — that job is the post's own",
@@ -420,6 +422,76 @@ section("Without the managed queue, publishing still works — it just can't sel
   check("nothing was queued", h.queued.length === 0);
   check("and the row still holds the id, so a manual retry can confirm it",
     h.row("SELECT status, ref FROM post_channels WHERE post_id = ?", post.id).ref === "tt-1");
+}
+
+section("A re-check touches only the channel waiting on a verdict");
+{
+  // The follow-up fires minutes after the post first went out. By then the
+  // author may have edited it: rescheduled it, added a channel. A re-check must
+  // ask TikTok about its one pending channel and do nothing else — not publish
+  // the new channel early, not retry the failed one, not forget the new job.
+  let verdict = { status: "PROCESSING_UPLOAD" };
+  const h = await boot({ queue: true, tiktokStatus: () => verdict });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "launch clip",
+    channel_ids: [ch.tiktok.id, ch.linkedin.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("TikTok is waiting and LinkedIn refused the video",
+    h.row("SELECT status FROM post_channels WHERE post_id = ? AND channel_id = ?", post.id, ch.tiktok.id).status === "pending" &&
+    h.row("SELECT status FROM post_channels WHERE post_id = ? AND channel_id = ?", post.id, ch.linkedin.id).status === "failed");
+
+  // The author reschedules the post for tomorrow and adds Facebook to it.
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+  await h.put(`/api/posts/${post.id}`, {
+    status: "scheduled", scheduled_at: tomorrow,
+    channel_ids: [ch.tiktok.id, ch.linkedin.id, ch.facebook.id],
+  });
+  const jobId = h.row("SELECT queue_job_id FROM posts WHERE id = ?", post.id).queue_job_id;
+  check("the reschedule booked its own job", !!jobId, jobId);
+
+  verdict = { status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7600"] };
+  const sendsBefore = h.sends.length;
+  const r = await h.deliver({ post_id: post.id, recheck: true });
+  check("the re-check is accepted as a genuine delivery", r.status === 200, JSON.stringify(r));
+  check("TikTok is confirmed",
+    h.row("SELECT status FROM post_channels WHERE post_id = ? AND channel_id = ?", post.id, ch.tiktok.id).status === "published");
+  check("nothing was sent: Facebook waits for tomorrow, LinkedIn for the author's retry",
+    h.sends.length === sendsBefore, JSON.stringify(h.sends.slice(sendsBefore)));
+  check("Facebook is still pending, not published early",
+    h.row("SELECT status FROM post_channels WHERE post_id = ? AND channel_id = ?", post.id, ch.facebook.id).status === "pending");
+  check("and tomorrow's job is still on the post, so editing or deleting can cancel it",
+    h.row("SELECT queue_job_id FROM posts WHERE id = ?", post.id).queue_job_id === jobId);
+}
+
+section("The scheduled delivery still sends every channel and clears its job");
+{
+  const h = await boot({ queue: true });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "on schedule",
+    channel_ids: [ch.x.id, ch.facebook.id],
+    status: "scheduled",
+    scheduled_at: new Date(Date.now() + 3_600_000).toISOString(),
+  })).body;
+  check("scheduling booked a job", !!h.row("SELECT queue_job_id FROM posts WHERE id = ?", post.id).queue_job_id);
+
+  const r = await h.deliver({ post_id: post.id });
+  check("the delivery is accepted", r.status === 200, JSON.stringify(r));
+  check("both channels went out", h.sends.length === 2, JSON.stringify(h.sends));
+  check("and the fired job is cleared",
+    h.row("SELECT queue_job_id FROM posts WHERE id = ?", post.id).queue_job_id === null);
+}
+
+section("A delivery the queue didn't sign is refused");
+{
+  const h = await boot({ queue: true });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", { content: "x", channel_ids: [ch.x.id] })).body;
+  const r = await h.post("/api/internal/publish", { post_id: post.id });
+  check("unsigned: 401, nothing sent", r.status === 401 && h.sends.length === 0, JSON.stringify(r));
 }
 
 report();
