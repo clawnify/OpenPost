@@ -1,4 +1,4 @@
-import type { Channel } from "../../types";
+import type { Channel, MediaItem } from "../../types";
 import { PLATFORM_LABELS } from "../../types";
 import { LinkedInPreview } from "./linkedin-preview";
 import { XPreview } from "./x-preview";
@@ -18,13 +18,13 @@ export function hasNativePreview(platform: string): boolean {
 interface Props {
   channel: Channel;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
 // Renders the post as it will appear on the channel's platform — a native card
 // when available, otherwise a generic text+attachments preview.
-export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
+export function PostPreview({ channel, content, media, timeLabel }: Props) {
   switch (channel.platform) {
     case "linkedin":
       return (
@@ -33,7 +33,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           authorHeadline={channel.profile_headline || channel.handle || undefined}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -44,7 +44,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           handle={channel.profile_handle || channel.handle || undefined}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -54,7 +54,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           username={channel.profile_handle || channel.handle || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -64,7 +64,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           pageName={channel.profile_name || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -74,12 +74,12 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           username={channel.profile_handle || channel.handle || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
     default:
-      return <GenericPreview channel={channel} content={content} imageUrl={imageUrl} timeLabel={timeLabel} />;
+      return <GenericPreview channel={channel} content={content} media={media} timeLabel={timeLabel} />;
   }
 }
 
@@ -90,33 +90,60 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
-// Avatar strip to switch which selected channel's preview is shown.
-export function PreviewChannelTabs({
+// Avatar strip to switch which channel is being written and previewed. `null`
+// is the "All channels" tab — the shared draft every channel inherits unless it
+// was given its own version; a dot marks the ones that were.
+//
+// One strip drives both the editor and the preview on purpose: a separate
+// preview switcher would let you type X's version while looking at LinkedIn.
+export function ChannelTabs({
   channels,
   activeId,
   onSelect,
+  customizedIds,
 }: {
   channels: Channel[];
   activeId: number | null;
-  onSelect: (id: number) => void;
+  onSelect: (id: number | null) => void;
+  customizedIds?: number[];
 }) {
   if (channels.length <= 1) return null;
+  const customized = new Set(customizedIds ?? []);
   return (
     <div class="flex items-center gap-2 mb-3">
+      <button
+        type="button"
+        onClick={() => onSelect(null)}
+        title="The shared draft — every channel that has no version of its own"
+        class={`h-9 px-3 rounded-full border text-xs font-medium transition-colors ${
+          activeId === null
+            ? "border-primary bg-primary text-primary-foreground"
+            : "border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+        }`}
+      >
+        All channels
+      </button>
       {channels.map((ch) => {
         const active = ch.id === activeId;
+        const own = customized.has(ch.id);
         return (
           <button
             key={ch.id}
             type="button"
             onClick={() => onSelect(ch.id)}
-            title={`${ch.name} · ${PLATFORM_LABELS[ch.platform] || ch.platform}`}
-            class={`w-9 h-9 rounded-full text-white flex items-center justify-center text-xs font-semibold transition-all ${
+            title={`${ch.name} · ${PLATFORM_LABELS[ch.platform] || ch.platform}${own ? " · has its own version" : ""}`}
+            class={`relative w-9 h-9 rounded-full text-white flex items-center justify-center text-xs font-semibold transition-all ${
               active ? "ring-2 ring-offset-2 ring-primary" : "opacity-50 hover:opacity-100"
             }`}
             style={{ background: ch.color }}
           >
             {initials(ch.name)}
+            {own && (
+              <span
+                class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-background"
+                aria-hidden="true"
+              />
+            )}
           </button>
         );
       })}

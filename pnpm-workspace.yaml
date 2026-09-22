@@ -1,7 +1,10 @@
+# esbuild and workerd need their install scripts to produce a usable binary,
+# and sharp is vite's optional image dependency. pnpm 11 leaves this key as an
+# unanswered stub on first install and refuses to install until it's decided.
 allowBuilds:
-  esbuild: set this to true or false
-  sharp: set this to true or false
-  workerd: set this to true or false
+  esbuild: true
+  sharp: true
+  workerd: true
 minimumReleaseAgeExclude:
   # First-party Clawnify packages — exempt from the new-release age gate so app
   # builds pick up fresh versions promptly.

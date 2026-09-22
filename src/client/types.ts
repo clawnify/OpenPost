@@ -12,10 +12,15 @@ export {
   PLATFORM_MEDIA_LIMITS,
   PLATFORM_COLORS,
   PLATFORM_LABELS,
-  mediaLimitError,
+  MAX_VIDEO_BYTES,
+  mediaError,
+  mediaShapeError,
 } from "../shared/platforms";
 export type { Platform } from "../shared/platforms";
 import type { Platform } from "../shared/platforms";
+export { mediaTypeFromUrl } from "../shared/media";
+export type { MediaType, MediaItem } from "../shared/media";
+import type { MediaType } from "../shared/media";
 
 // A Facebook Page the connected account manages (GET /api/platforms/facebook/pages).
 export interface FacebookPage {
@@ -41,6 +46,10 @@ export interface Channel {
   profile_avatar_url?: string | null;
   profile_headline?: string | null;
   profile_synced_at?: string | null;
+  // This channel's own version of the post text, when the author customized it.
+  // Null/absent means it publishes the post's shared draft. Only populated on
+  // channels nested in a Post.
+  content_override?: string | null;
   // Per-channel delivery state — only populated on channels nested in a Post.
   delivery_status?: DeliveryStatus;
   delivery_ref?: string | null;
@@ -60,7 +69,7 @@ export interface Media {
   id: number;
   post_id: number;
   url: string;
-  type: string;
+  type: MediaType;
   created_at: string;
 }
 
