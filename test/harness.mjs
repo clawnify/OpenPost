@@ -60,6 +60,10 @@ function broker(plan = {}) {
   // Called once per poll, so a scenario can return PROCESSING_UPLOAD forever to
   // reproduce a post the app never gets a verdict on.
   const tiktokStatus = plan.tiktokStatus ?? (() => ({ status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7500"] }));
+  // Facebook video is accepted the same way: the Page's video list then says
+  // ready / processing / error. null means the video isn't listed at all.
+  const facebookVideoStatus = plan.facebookVideoStatus ?? (() => "ready");
+  const fbVideos = [];
   return {
     sends,
     polls,
@@ -109,9 +113,21 @@ function broker(plan = {}) {
             const body = tiktokStatus(args.publish_id, polls.length);
             return { data: { data: body, error: { code: "ok", message: "", log_id: "l1" } }, error: null, successful: true };
           }
-          case "FACEBOOK_CREATE_VIDEO_POST":
+          case "FACEBOOK_CREATE_VIDEO_POST": {
             sends.push({ service, toolSlug, text: args.description, video: args.file_url });
-            return { data: { id: `fbv-${sends.length}` }, error: null, successful: true };
+            const id = `fbv-${sends.length}`;
+            fbVideos.push(id);
+            return { data: { id }, error: null, successful: true };
+          }
+          case "FACEBOOK_GET_PAGE_VIDEOS": {
+            // Not a send: reading the Page's videos posts nothing.
+            polls.push(`fb:${args.page_id}`);
+            const data = fbVideos
+              .map((id) => ({ id, status: facebookVideoStatus(id, polls.length), permalink_url: `/thepage/videos/${id}/` }))
+              .filter((v) => v.status !== null)
+              .map((v) => ({ ...v, status: { video_status: v.status } }));
+            return { data: { data }, error: null, successful: true };
+          }
           case "FACEBOOK_CREATE_POST":
             sends.push({ service, toolSlug, text: args.message });
             return { data: { id: `fb-${sends.length}` }, error: null, successful: true };

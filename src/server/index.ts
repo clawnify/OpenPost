@@ -8,6 +8,7 @@ import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./up
 import { mediaError, MAX_VIDEO_BYTES } from "../shared/platforms";
 import { splitMedia, toMediaItem, mediaTypeFromMime, type MediaItem } from "../shared/media";
 import { awaitPublish, tiktokPostUrl } from "./tiktok";
+import { pollOutcome, type PublishOutcome } from "./confirm";
 
 type Env = {
   Bindings: {
@@ -32,7 +33,8 @@ interface PublishResult {
   // Handed to the platform, which hasn't said whether it went live yet. Not a
   // success and not a failure: the row stays `pending` so nothing re-sends it
   // (a re-send would double-post) and the next delivery re-checks instead.
-  // Only TikTok produces this — its Content Posting API is asynchronous.
+  // Only the platforms that publish asynchronously produce this: TikTok, and
+  // Facebook video (see CONFIRMERS).
   pending?: boolean;
   error?: string;
   ref?: string;   // platform post id (Postiz: releaseId)
@@ -121,8 +123,8 @@ async function publishPost(
 
     // Accepted by the platform on an earlier delivery but never confirmed (a
     // pending row that already carries a ref). Ask what became of it instead of
-    // sending again — TikTok is explicit that re-initiating the same publish_id
-    // double-posts, and it is the only platform that produces such a row.
+    // sending again — a second upload is a second post (TikTok's docs say it
+    // outright), and only the platforms in CONFIRMERS produce such a row.
     const r =
       (await recheckChannel(channel, base)) ??
       (await publishToChannel(channel, channelContent(channel, post.content), media));
@@ -155,8 +157,8 @@ async function publishPost(
   const states = await query<any>("SELECT status, ref, attempts FROM post_channels WHERE post_id = ?", [id]);
   const delivered = states.filter((s: any) => s.status === "published").length;
   // Two different pending rows. One carries a ref: the platform has the post
-  // and hasn't ruled on it (TikTok). One doesn't: nothing has been sent, so
-  // another delivery is holding it.
+  // and hasn't ruled on it (see CONFIRMERS). One doesn't: nothing has been
+  // sent, so another delivery is holding it.
   const unconfirmed = states.filter((s: any) => s.status === "pending" && s.ref);
   const awaiting = unconfirmed.length;
   const inFlight = states.filter((s: any) => s.status === "pending" && !s.ref).length;
@@ -231,13 +233,31 @@ async function scheduleRecheck(env: Env["Bindings"], origin: string, postId: num
 // sending it a second time. Returns null when there is nothing to re-check —
 // the ordinary case — and the caller publishes normally.
 //
-// Only TikTok writes a pending row with a ref (its Content Posting API is
-// asynchronous; see settleTikTok). A pending row on any other platform is one
-// that was never sent, so it falls through to a real publish.
+// Only a platform in CONFIRMERS writes a pending row with a ref. A pending row
+// on any other platform is one that was never sent, so it falls through to a
+// real publish.
+//
+// When the follow-up ladder has run out and the platform still hasn't ruled,
+// the row stops being pending and becomes a failure that says so. Left pending,
+// the author's retry would only ever re-check it, and a post the platform
+// silently dropped could never be sent again.
 async function recheckChannel(channel: any, base: { channelId: number; channel: string; platform: string }): Promise<PublishResult | null> {
   if (channel.delivery_status !== "pending" || !channel.delivery_ref) return null;
-  if (channel.platform !== "tiktok") return null;
-  return { ...base, ...(await settleTikTok(channel, channel.delivery_ref as string)) };
+  const confirm = CONFIRMERS[channel.platform];
+  if (!confirm) return null;
+  const r = await confirm(channel, channel.delivery_ref as string);
+  // The claim has already bumped attempts, so this delivery is attempt n+1.
+  const tries = (Number(channel.delivery_attempts) || 0) + 1;
+  if (r.pending && tries > RECHECK_DELAYS_S.length) {
+    const label = channel.platform === "tiktok" ? "TikTok" : "Facebook";
+    return {
+      ...base,
+      ...r,
+      pending: false,
+      error: `${label} never confirmed this post. Check the account before retrying — a retry uploads it again.`,
+    };
+  }
+  return { ...base, ...r };
 }
 
 // The text this channel actually publishes: its own version when it has one,
@@ -433,11 +453,11 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
           published: true,
         });
         if (!v) return { ...base, success: false, error: "No Facebook credentials. Connect Facebook in Clawnify." };
+        if (!v.successful) return { ...base, success: false, error: v.error || "Facebook video post failed" };
         const vd = (((v.data as any)?.response_data ?? v.data) || {}) as { id?: string };
-        // The id here is the video's, not a page_post id, so it takes the
-        // /videos permalink rather than facebookPostUrl's /posts one.
-        const vurl = vd.id ? `https://www.facebook.com/${pageId}/videos/${vd.id}` : undefined;
-        return { ...base, success: !!v.successful, error: v.successful ? undefined : (v.error || "Facebook video post failed"), ref: vd.id, url: vurl };
+        // Accepted is not posted: Facebook still has to fetch the file from
+        // file_url and encode it, and either can fail after this returns.
+        return { ...base, ...(await settleFacebookVideo(channel, vd.id)) };
       }
       // Several photos need the unpublished-upload + attached_media dance;
       // FACEBOOK_CREATE_MULTI_PHOTO_POST does the whole thing in one call and
@@ -544,10 +564,7 @@ function tiktokError(error: string | null | undefined, data: unknown): string {
 //
 // Shared by the initial publish and by the re-check on a later delivery, so a
 // post can only ever be called live on TikTok's own word.
-async function settleTikTok(
-  channel: any,
-  publishId: string | undefined,
-): Promise<{ success: boolean; pending?: boolean; error?: string; ref?: string; url?: string }> {
+async function settleTikTok(channel: any, publishId: string | undefined): Promise<Settled> {
   // TikTok accepted the post but gave us no id to poll. This must not become a
   // pending row: `pending` only means "don't re-send" while there is a ref to
   // re-check with, and a pending row without one falls through to a re-send on
@@ -565,6 +582,77 @@ async function settleTikTok(
   }
   return { success: false, ref: publishId, error: outcome.message };
 }
+
+// Facebook video, confirmed the same way. /videos with file_url returns the
+// video id as soon as Facebook has queued the fetch; the file is downloaded and
+// encoded afterwards, and a URL it can't read or a file it can't decode fails
+// there, not in the response we already have.
+async function settleFacebookVideo(channel: any, videoId: string | undefined): Promise<Settled> {
+  // No id means nothing to confirm with. Same reasoning as settleTikTok: a
+  // pending row without a ref would re-send on the next delivery.
+  if (!videoId) {
+    return { success: false, error: "Facebook accepted the video but returned no id, so we can't confirm it went out. Check the Page before retrying." };
+  }
+  const pageId = accountId(channel);
+  if (!pageId) return { success: false, ref: videoId, error: "Facebook channel has no Page selected." };
+  const outcome = await pollOutcome(() => checkFacebookVideo(pageId, videoId));
+  if (outcome.state === "published") {
+    // The id is the video's, not a page_post id, so the fallback takes the
+    // /videos permalink rather than facebookPostUrl's /posts one.
+    return { success: true, ref: videoId, url: outcome.url ?? `https://www.facebook.com/${pageId}/videos/${videoId}` };
+  }
+  if (outcome.state === "processing") return { success: false, pending: true, ref: videoId, error: outcome.message };
+  return { success: false, ref: videoId, error: outcome.message };
+}
+
+// One look at the video's processing state. There is no single-video read in
+// Composio's Facebook catalogue, so this lists the Page's videos (newest first)
+// and finds ours; `fields` is passed straight to the Graph API, and the tool's
+// Video model carries status.video_status through. The Graph reference gives
+// three values: ready (uploaded, encoded, thumbnails extracted), processing,
+// and error.
+async function checkFacebookVideo(pageId: string, videoId: string): Promise<PublishOutcome> {
+  const r = await executeTool("facebook", "FACEBOOK_GET_PAGE_VIDEOS", {
+    page_id: pageId,
+    fields: "id,status,permalink_url",
+    limit: 25,
+  });
+  if (!r) return { state: "processing", message: "Couldn't reach Facebook to confirm this video went out." };
+  if (!r.successful) return { state: "processing", message: r.error || "Facebook status check failed." };
+  const list = ((r.data as any)?.data ?? (r.data as any)?.response_data?.data ?? []) as Array<{
+    id?: string | number;
+    status?: { video_status?: string };
+    permalink_url?: string;
+  }>;
+  const video = list.find((v) => String(v.id) === videoId);
+  // Not listed yet is not a failure: a video still being fetched may not show
+  // up, and we can't tell that apart from one Facebook dropped. The follow-up
+  // ladder decides when to stop waiting.
+  if (!video) return { state: "processing", message: "Facebook hasn't listed the video yet." };
+  switch (video.status?.video_status) {
+    case "ready": {
+      // Graph returns the video permalink as a path on facebook.com.
+      const link = video.permalink_url;
+      return { state: "published", url: link ? (link.startsWith("/") ? `https://www.facebook.com${link}` : link) : undefined };
+    }
+    case "error":
+      return { state: "failed", message: "Facebook couldn't process the video. Check that the file plays, then retry." };
+    default:
+      return { state: "processing", message: "Facebook is still processing this video." };
+  }
+}
+
+// What a confirmer settles a delivery to: the parts of a PublishResult the
+// platform decides.
+type Settled = { success: boolean; pending?: boolean; error?: string; ref?: string; url?: string };
+
+// Platforms that accept a post before it exists, and how to ask each one what
+// became of it. A platform here can leave a pending row with a ref; a platform
+// missing from here never does, and recheckChannel sends it normally.
+const CONFIRMERS: Record<string, (channel: any, ref: string) => Promise<Settled>> = {
+  tiktok: settleTikTok,
+  facebook: settleFacebookVideo,
+};
 
 // The platform-side account a channel publishes as (Facebook Page ID,
 // Instagram Business Account ID). Rows from before platform_account_id existed

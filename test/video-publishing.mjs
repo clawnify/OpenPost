@@ -298,11 +298,12 @@ section("An unconfirmed TikTok post arranges its own follow-up");
     h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "published");
 }
 
-section("A post TikTok never rules on stops rescheduling itself");
+section("A post TikTok never rules on stops waiting, and hands the retry back");
 {
   // The ladder is the runaway guard: without it a publish_id the platform never
-  // settles would re-queue itself forever. Past the last rung the row keeps its
-  // ref and the author keeps the retry — nothing loops.
+  // settles would re-queue itself forever. At its end the row must stop being
+  // pending — a pending row's retry only re-checks, so a post the platform
+  // silently dropped could otherwise never be sent again.
   const h = await boot({ queue: true, tiktokStatus: () => ({ status: "PROCESSING_UPLOAD" }) });
   const ch = await channels(h);
   const post = (await h.post("/api/posts", {
@@ -321,11 +322,84 @@ section("A post TikTok never rules on stops rescheduling itself");
   await h.post(`/api/posts/${post.id}/publish`);
   check("the last rung still queues one", h.queued.length === 2, JSON.stringify(h.queued.length));
 
-  await h.post(`/api/posts/${post.id}/publish`);
+  const sendsBefore = h.sends.length;
+  const last = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.tiktok.id);
   check("past it, nothing more is queued", h.queued.length === 2);
-  check("but the post keeps its id and its retry",
-    h.row("SELECT status, ref FROM post_channels WHERE post_id = ?", post.id).ref === "tt-1" &&
-    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "partial");
+  check("and it still didn't upload again on its own", h.sends.length === sendsBefore);
+  const row = h.row("SELECT status, ref, error FROM post_channels WHERE post_id = ?", post.id);
+  check("the channel is failed now, with the id kept for reference",
+    row.status === "failed" && row.ref === "tt-1", JSON.stringify(row));
+  check("and it tells the author to look before retrying, because a retry re-sends",
+    !last.success && /never confirmed/.test(last.error) && /uploads it again/.test(last.error), last.error);
+
+  await h.post(`/api/posts/${post.id}/publish`);
+  check("a retry after that really does send it again", h.sends.length === sendsBefore + 1);
+}
+
+section("A Facebook video is only published once Facebook has processed it");
+{
+  const h = await boot();
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "page video",
+    channel_ids: [ch.facebook.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const r = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.facebook.id);
+  check("it read the Page's videos before calling it published",
+    h.polls.includes("fb:9001"), h.polls.join(","));
+  check("and it is published", r.success);
+  check("linking to the video's own permalink, made absolute",
+    r.url === "https://www.facebook.com/thepage/videos/fbv-1/", r.url);
+}
+
+section("A Facebook video Facebook can't process is a failed channel");
+{
+  const h = await boot({ facebookVideoStatus: () => "error" });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "broken file",
+    channel_ids: [ch.facebook.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const r = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.facebook.id);
+  check("the channel fails, and says what went wrong",
+    !r.success && /couldn't process the video/.test(r.error), r.error);
+  check("the row is failed, so the author can fix the file and retry",
+    h.row("SELECT status FROM post_channels WHERE post_id = ?", post.id).status === "failed");
+}
+
+section("A Facebook video still processing is re-checked, never re-uploaded");
+{
+  // Not listed at first, then processing, then ready: each is "not yet".
+  let state = null;
+  const h = await boot({ queue: true, facebookVideoStatus: () => state });
+  const ch = await channels(h);
+  const post = (await h.post("/api/posts", {
+    content: "slow encode",
+    channel_ids: [ch.facebook.id],
+    media: [{ url: VIDEO, type: "video" }],
+  })).body;
+
+  const first = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.facebook.id);
+  check("a video Facebook hasn't listed yet is pending, not failed",
+    !first.success && first.pending === true, first.error);
+  check("the row holds the video id", h.row("SELECT status, ref FROM post_channels WHERE post_id = ?", post.id).ref === "fbv-1");
+  check("and a follow-up is queued", h.queued.length === 1);
+
+  state = "processing";
+  const sendsBefore = h.sends.length;
+  const second = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.facebook.id);
+  check("still processing stays pending", second.pending === true && /still processing/.test(second.error), second.error);
+
+  state = "ready";
+  const third = by((await h.post(`/api/posts/${post.id}/publish`)).body.results, ch.facebook.id);
+  check("once ready it is published", third.success);
+  check("and it was never uploaded a second time", h.sends.length === sendsBefore, `${sendsBefore} -> ${h.sends.length}`);
+  check("the post is published",
+    h.row("SELECT status FROM posts WHERE id = ?", post.id).status === "published");
 }
 
 section("Without the managed queue, publishing still works — it just can't self-resolve");

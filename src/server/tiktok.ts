@@ -21,21 +21,7 @@
  * TikTok's docs tell you never to do — it would double-post).
  */
 
-// Poll schedule, in milliseconds to wait *before* each retry. The first status
-// check happens immediately, so a post that is already done costs nothing.
-// TikTok allows 30 status calls per minute per token; four checks over ~10s is
-// far inside that, catches the photo posts and short clips that settle quickly,
-// and keeps a multi-channel publish from stalling on this one channel. Anything
-// slower comes back as "processing" and is resolved by the next delivery.
-const POLL_DELAYS_MS = [1500, 3000, 6000];
-
-export type TikTokPublishOutcome =
-  /** Live on the profile. `postId` is present once moderation has approved it. */
-  | { state: "published"; postId?: string }
-  /** TikTok took it but hasn't finished. Not live, and must not be re-sent. */
-  | { state: "processing"; message: string }
-  /** Terminal rejection, or a draft sitting in the creator's inbox. */
-  | { state: "failed"; message: string };
+import { pollOutcome, type PublishOutcome } from "./confirm";
 
 // TikTok's fail_reason vocabulary. Anything unlisted falls through to the raw
 // code, which is still more useful to the author than "TikTok post failed".
@@ -62,70 +48,62 @@ type Exec = (
   args: Record<string, unknown>,
 ) => Promise<{ successful?: boolean; error?: string | null; data?: unknown } | null>;
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 /**
  * Poll a publish_id to a terminal state, or give up and report "processing".
  *
  * Never throws and never reports success on an unknown state — every path this
  * returns is one the caller can persist as-is.
  */
-export async function awaitPublish(exec: Exec, publishId: string): Promise<TikTokPublishOutcome> {
-  let last = "TikTok is still processing this post.";
+export function awaitPublish(exec: Exec, publishId: string): Promise<PublishOutcome> {
+  return pollOutcome(() => checkOnce(exec, publishId));
+}
 
-  for (let attempt = 0; ; attempt++) {
-    const r = await exec("tiktok", "TIKTOK_FETCH_PUBLISH_STATUS", { publish_id: publishId });
+async function checkOnce(exec: Exec, publishId: string): Promise<PublishOutcome> {
+  const r = await exec("tiktok", "TIKTOK_FETCH_PUBLISH_STATUS", { publish_id: publishId });
 
-    // No broker at all (off-platform, or TikTok disconnected between the two
-    // calls). We can't confirm, and we already handed TikTok the post, so this
-    // is "unknown", not "failed" — the same reasoning as a timed-out poll.
-    if (!r) {
-      last = "Couldn't reach TikTok to confirm this post went out.";
-    } else {
-      const body = (r.data as any)?.data as
-        | { status?: string; fail_reason?: string; publicaly_available_post_id?: string[] }
-        | undefined;
-      // Composio nests TikTok's own error object under data.error; the wrapper's
-      // top-level `error` is Composio's. Either can carry the real reason.
-      const apiError = (r.data as any)?.error as { code?: string; message?: string } | undefined;
+  // No broker at all (off-platform, or TikTok disconnected between the two
+  // calls). We can't confirm, and we already handed TikTok the post, so this
+  // is "unknown", not "failed" — the same reasoning as a timed-out poll.
+  if (!r) return { state: "processing", message: "Couldn't reach TikTok to confirm this post went out." };
 
-      if (apiError?.code && apiError.code !== "ok") {
-        // invalid_publish_id / token_not_authorized are terminal: no amount of
-        // polling fixes them, and the post is not coming.
-        if (apiError.code === "invalid_publish_id" || apiError.code === "token_not_authorized_for_specified_publish_id") {
-          return { state: "failed", message: `TikTok lost track of this post (${apiError.code}).` };
-        }
-        last = apiError.message || `TikTok status check failed (${apiError.code}).`;
-      } else if (!r.successful) {
-        last = r.error || "TikTok status check failed.";
-      } else {
-        switch (body?.status) {
-          case "PUBLISH_COMPLETE":
-            // The post id array is only populated once moderation has approved a
-            // public post, so it can legitimately be empty on a private one.
-            return { state: "published", postId: body.publicaly_available_post_id?.[0] };
-          case "FAILED":
-            return {
-              state: "failed",
-              message: FAIL_REASONS[body.fail_reason ?? ""] ?? `TikTok rejected the post (${body.fail_reason || "no reason given"}).`,
-            };
-          case "SEND_TO_USER_INBOX":
-            // Uploaded, but as a draft the creator has to finish by hand. Never
-            // a published post, and nothing we can push further from here.
-            return {
-              state: "failed",
-              message: "TikTok took the post but left it as a draft — open the TikTok app to finish posting it.",
-            };
-          case "PROCESSING_UPLOAD":
-          case "PROCESSING_DOWNLOAD":
-          default:
-            last = "TikTok is still processing this post.";
-        }
-      }
+  const body = (r.data as any)?.data as
+    | { status?: string; fail_reason?: string; publicaly_available_post_id?: string[] }
+    | undefined;
+  // Composio nests TikTok's own error object under data.error; the wrapper's
+  // top-level `error` is Composio's. Either can carry the real reason.
+  const apiError = (r.data as any)?.error as { code?: string; message?: string } | undefined;
+
+  if (apiError?.code && apiError.code !== "ok") {
+    // invalid_publish_id / token_not_authorized are terminal: no amount of
+    // polling fixes them, and the post is not coming.
+    if (apiError.code === "invalid_publish_id" || apiError.code === "token_not_authorized_for_specified_publish_id") {
+      return { state: "failed", message: `TikTok lost track of this post (${apiError.code}).` };
     }
+    return { state: "processing", message: apiError.message || `TikTok status check failed (${apiError.code}).` };
+  }
+  if (!r.successful) return { state: "processing", message: r.error || "TikTok status check failed." };
 
-    if (attempt >= POLL_DELAYS_MS.length) return { state: "processing", message: last };
-    await sleep(POLL_DELAYS_MS[attempt]);
+  switch (body?.status) {
+    case "PUBLISH_COMPLETE":
+      // The post id array is only populated once moderation has approved a
+      // public post, so it can legitimately be empty on a private one.
+      return { state: "published", postId: body.publicaly_available_post_id?.[0] };
+    case "FAILED":
+      return {
+        state: "failed",
+        message: FAIL_REASONS[body.fail_reason ?? ""] ?? `TikTok rejected the post (${body.fail_reason || "no reason given"}).`,
+      };
+    case "SEND_TO_USER_INBOX":
+      // Uploaded, but as a draft the creator has to finish by hand. Never
+      // a published post, and nothing we can push further from here.
+      return {
+        state: "failed",
+        message: "TikTok took the post but left it as a draft — open the TikTok app to finish posting it.",
+      };
+    case "PROCESSING_UPLOAD":
+    case "PROCESSING_DOWNLOAD":
+    default:
+      return { state: "processing", message: "TikTok is still processing this post." };
   }
 }
 

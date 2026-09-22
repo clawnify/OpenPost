@@ -57,8 +57,8 @@ CREATE TABLE IF NOT EXISTS post_channels (
   content TEXT,
   -- pending | published | failed. `pending` covers both "not sent yet" and
   -- "sent, and the platform hasn't ruled on it" — the second is the one with a
-  -- ref, which publishPost() re-checks instead of re-sending (TikTok's Content
-  -- Posting API only ever accepts a post synchronously).
+  -- ref, which publishPost() re-checks instead of re-sending (TikTok and
+  -- Facebook video only ever accept a post synchronously).
   status TEXT NOT NULL DEFAULT 'pending',
   ref TEXT,            -- platform post id (Postiz: releaseId)
   url TEXT,            -- link to the live post (Postiz: releaseURL)

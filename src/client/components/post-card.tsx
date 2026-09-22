@@ -33,8 +33,8 @@ function ChannelChip({ ch }: { ch: Channel }) {
   const label = PLATFORM_LABELS[ch.platform] || ch.platform;
   const base = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white";
 
-  // Sent, and the platform hasn't ruled on it yet — TikTok only accepts a post
-  // synchronously, the verdict comes later. A pending row carrying a message is
+  // Sent, and the platform hasn't ruled on it yet — TikTok and Facebook video
+  // only accept a post synchronously, the verdict comes later. A pending row carrying a message is
   // the one that has already gone out; a plain pending row hasn't. Showing them
   // the same way would hide a post whose fate nobody knows.
   if (ch.delivery_status === "pending" && ch.delivery_error) {
