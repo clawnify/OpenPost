@@ -2,6 +2,7 @@ import { Clock, Edit2, Trash2, Send, ExternalLink, AlertCircle, Hourglass } from
 import type { Post, Channel } from "../types";
 import { PLATFORM_LABELS } from "../types";
 import { PostPreview, hasNativePreview } from "./previews";
+import { PlatformIcon } from "./platform-icon";
 
 interface Props {
   post: Post;
@@ -11,6 +12,8 @@ interface Props {
   // When set, render the post as a native-looking platform preview (used in the
   // queue) instead of the plain text excerpt.
   preview?: boolean;
+  // Inside a card already (dashboard): no shadow of its own, a hairline on top instead.
+  flat?: boolean;
 }
 
 function formatDate(d: string | null) {
@@ -20,35 +23,36 @@ function formatDate(d: string | null) {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  draft: "bg-muted text-muted-foreground",
-  scheduled: "bg-blue-50 text-blue-700",
-  published: "bg-green-50 text-green-700",
-  partial: "bg-amber-50 text-amber-700",
-  failed: "bg-red-50 text-red-700",
+  draft: "chip",
+  scheduled: "pill bg-info-tint text-info",
+  published: "pill bg-success-tint text-success",
+  partial: "pill bg-warning-tint text-warning",
+  failed: "pill bg-destructive-tint text-destructive",
 };
 
 // Per-channel chip: links out to the live post when delivered, and surfaces the
 // platform rejection (e.g. Twitter "CreditsDepleted") on failure.
 function ChannelChip({ ch }: { ch: Channel }) {
   const label = PLATFORM_LABELS[ch.platform] || ch.platform;
-  const base = "inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium text-white";
+  const base = "brand-pill inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium";
 
   // Sent, and the platform hasn't ruled on it yet — TikTok and Facebook video
-  // only accept a post synchronously, the verdict comes later. A pending row carrying a message is
-  // the one that has already gone out; a plain pending row hasn't. Showing them
-  // the same way would hide a post whose fate nobody knows.
+  // only accept a post synchronously, the verdict comes later. A pending row
+  // carrying a message is the one that has already gone out; a plain pending
+  // row hasn't. Showing them the same way would hide a post whose fate nobody
+  // knows.
   if (ch.delivery_status === "pending" && ch.delivery_error) {
     return (
-      <span class={`${base} opacity-75`} style={{ background: ch.color }} title={ch.delivery_error}>
-        {label} <Hourglass size={11} />
+      <span class={`${base} opacity-75`} style={{ "--brand": ch.color }} title={ch.delivery_error}>
+        <PlatformIcon platform={ch.platform} /> {label} <Hourglass size={11} />
       </span>
     );
   }
 
   if (ch.delivery_status === "failed") {
     return (
-      <span class={`${base} opacity-60`} style={{ background: ch.color }} title={ch.delivery_error || "Failed to publish"}>
-        {label} <AlertCircle size={11} />
+      <span class={`${base} opacity-60`} style={{ "--brand": ch.color }} title={ch.delivery_error || "Failed to publish"}>
+        <PlatformIcon platform={ch.platform} /> {label} <AlertCircle size={11} />
       </span>
     );
   }
@@ -60,22 +64,22 @@ function ChannelChip({ ch }: { ch: Channel }) {
         target="_blank"
         rel="noopener noreferrer"
         class={`${base} hover:opacity-90`}
-        style={{ background: ch.color }}
+        style={{ "--brand": ch.color }}
         title="View live post"
       >
-        {label} <ExternalLink size={11} />
+        <PlatformIcon platform={ch.platform} /> {label} <ExternalLink size={11} />
       </a>
     );
   }
 
   return (
-    <span class={base} style={{ background: ch.color }}>
-      {label}
+    <span class={base} style={{ "--brand": ch.color }}>
+      <PlatformIcon platform={ch.platform} /> {label}
     </span>
   );
 }
 
-export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) {
+export function PostCard({ post, onEdit, onDelete, onPublish, preview, flat }: Props) {
   const excerpt = post.content.length > 140 ? post.content.slice(0, 140) + "..." : post.content;
   const previewChannel = preview ? post.channels.find((ch) => hasNativePreview(ch.platform)) : undefined;
   const firstMedia = post.media[0];
@@ -85,11 +89,11 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
     : "Now";
 
   return (
-    <div class="bg-card border border-border rounded-lg p-4 hover:shadow-md transition-shadow">
+    <div class={preview ? "" : flat ? "pt-3 border-t border-border first:border-t-0 first:pt-0" : "card p-5"}>
       {previewChannel ? (
         <PostPreview channel={previewChannel} content={post.content} media={firstMedia} timeLabel={timeLabel} />
       ) : (
-        <p class="text-sm text-foreground leading-relaxed whitespace-pre-wrap">
+        <p class="text-foreground leading-relaxed whitespace-pre-wrap">
           {excerpt || "(empty)"}
         </p>
       )}
@@ -107,8 +111,8 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
           {post.labels.map((l) => (
             <span
               key={l.id}
-              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border"
-              style={{ borderColor: l.color, color: l.color }}
+              class="pill brand-pill"
+              style={{ "--brand": l.color }}
             >
               {l.name}
             </span>
@@ -116,9 +120,9 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
         </div>
       )}
 
-      <div class="flex items-center justify-between mt-3 pt-3 border-t border-border">
+      <div class="flex items-center justify-between mt-3">
         <div class="flex items-center gap-2">
-          <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${STATUS_STYLES[post.status] || ""}`}>
+          <span class={`capitalize ${STATUS_STYLES[post.status] || "chip"}`}>
             {post.status}
           </span>
           {post.scheduled_at && (
@@ -135,7 +139,7 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
           {onPublish && (post.status === "scheduled" || post.status === "failed" || post.status === "partial") && (
             <button
               onClick={() => onPublish(post.id)}
-              class="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+              class="icon-btn"
               title={
                 post.status === "partial"
                   ? "Retry the channels that failed"
@@ -149,14 +153,14 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview }: Props) 
           )}
           <button
             onClick={() => onEdit(post.id)}
-            class="p-1.5 rounded-md hover:bg-accent text-muted-foreground hover:text-foreground transition-colors"
+            class="icon-btn"
             title="Edit"
           >
             <Edit2 size={14} />
           </button>
           <button
             onClick={() => onDelete(post.id)}
-            class="p-1.5 rounded-md hover:bg-red-50 text-muted-foreground hover:text-destructive transition-colors"
+            class="icon-btn hover:!bg-destructive-tint hover:!text-destructive"
             title="Delete"
           >
             <Trash2 size={14} />

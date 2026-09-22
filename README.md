@@ -101,6 +101,7 @@ database rather than left to the caller.
 ## Architecture
 
 ```
+schema.sql          -- Database schema (channels, posts, labels, media)
 src/
   shared/
     platforms.ts    -- Platform limits, colours, labels; which platforms take video, and the media rules the server enforces and the composer warns on
@@ -110,7 +111,6 @@ src/
     db.ts           -- D1-native database adapter
     credentials.ts  -- Credential service binding adapter (prod + local fallback)
     twitter.ts      -- X API v2 client (OAuth 2.0 Bearer + OAuth 1.0a)
-    schema.sql      -- Database schema (channels, posts, labels, media)
   client/
     app.tsx              -- Root component with router
     context.tsx          -- Preact context for app state

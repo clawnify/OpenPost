@@ -23,8 +23,8 @@ export function GenericPreview({ channel, content, media, timeLabel }: Props) {
     <div class="bg-card rounded-lg border border-border max-w-[552px] overflow-hidden">
       <div class="flex items-center gap-2 px-4 pt-3">
         <div
-          class="w-10 h-10 rounded-full text-white flex items-center justify-center text-xs font-semibold shrink-0"
-          style={{ background: channel.color }}
+          class="brand-soft w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0"
+          style={{ "--brand": channel.color }}
         >
           {initials(channel.name)}
         </div>

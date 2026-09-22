@@ -3,6 +3,7 @@ import { Plus, Trash2, Edit2, Check, X, RefreshCw } from "lucide-preact";
 import { useApp } from "../context";
 import { api } from "../api";
 import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS } from "../types";
+import { PlatformIcon } from "./platform-icon";
 import type { Platform, FacebookPage } from "../types";
 
 // Only offer platforms the server can publish to (see PUBLISHABLE_PLATFORMS) —
@@ -82,9 +83,9 @@ export function ChannelList() {
   return (
     <div class="p-6 max-w-4xl mx-auto">
       <div class="flex items-center justify-between mb-6">
-        <h1 class="text-xl font-semibold">Channels</h1>
+        <h1 class="text-[1.375rem] font-semibold tracking-[-0.01em]">Channels</h1>
         <button
-          class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+          class="btn-primary"
           onClick={() => { resetForm(); setShowForm(true); }}
         >
           <Plus size={14} /> Add Channel
@@ -93,13 +94,13 @@ export function ChannelList() {
 
       {/* Form */}
       {showForm && (
-        <div class="bg-card border border-border rounded-lg p-5 mb-6">
+        <div class="card p-5 mb-6">
           <h3 class="text-base font-semibold mb-4">{editingId ? "Edit Channel" : "New Channel"}</h3>
           <div class="grid grid-cols-2 gap-4">
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Name</label>
               <input
-                class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                class="input"
                 value={name}
                 onInput={(e) => setName((e.target as HTMLInputElement).value)}
                 placeholder="My Twitter"
@@ -108,7 +109,7 @@ export function ChannelList() {
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Platform</label>
               <select
-                class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                class="input"
                 value={platform}
                 onChange={(e) => {
                   const p = (e.target as HTMLSelectElement).value as Platform;
@@ -126,7 +127,7 @@ export function ChannelList() {
                 <label class="block text-xs font-medium text-muted-foreground mb-1.5">Page</label>
                 {fbPages && fbPages.length > 0 ? (
                   <select
-                    class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                    class="input"
                     value={accountId}
                     onChange={(e) => pickFacebookPage((e.target as HTMLSelectElement).value)}
                   >
@@ -140,7 +141,7 @@ export function ChannelList() {
                 ) : (
                   <>
                     <input
-                      class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      class="input"
                       value={accountId}
                       onInput={(e) => setAccountId((e.target as HTMLInputElement).value)}
                       placeholder="Facebook Page ID"
@@ -159,7 +160,7 @@ export function ChannelList() {
               <div>
                 <label class="block text-xs font-medium text-muted-foreground mb-1.5">Handle</label>
                 <input
-                  class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  class="input"
                   value={handle}
                   onInput={(e) => setHandle((e.target as HTMLInputElement).value)}
                   placeholder="@username"
@@ -176,7 +177,7 @@ export function ChannelList() {
               <div class="flex items-center gap-2">
                 <input
                   type="color"
-                  class="w-10 h-10 rounded-md border border-border cursor-pointer"
+                  class="w-10 h-10 rounded-sm cursor-pointer shadow-edge"
                   value={color}
                   onInput={(e) => setColor((e.target as HTMLInputElement).value)}
                 />
@@ -186,13 +187,13 @@ export function ChannelList() {
           </div>
           <div class="flex justify-end gap-2 mt-4 pt-4 border-t border-border">
             <button
-              class="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-sm hover:bg-accent transition-colors"
+              class="btn-secondary"
               onClick={resetForm}
             >
               <X size={14} /> Cancel
             </button>
             <button
-              class="inline-flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              class="btn-primary disabled:opacity-50"
               onClick={handleSave}
               disabled={!name.trim() || needsPage}
             >
@@ -211,25 +212,24 @@ export function ChannelList() {
       ) : (
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           {channels.map((ch) => (
-            <div key={ch.id} class="bg-card border border-border rounded-lg overflow-hidden">
-              <div class="h-1" style={{ background: ch.color }} />
-              <div class="p-4">
+            <div key={ch.id} class="card">
+              <div class="p-5">
                 <div class="flex items-start gap-3">
                   {ch.profile_avatar_url ? (
                     <img src={ch.profile_avatar_url} alt="" class="w-10 h-10 rounded-full object-cover shrink-0" />
                   ) : (
                     <div
-                      class="w-10 h-10 rounded-full text-white flex items-center justify-center text-xs font-semibold shrink-0"
-                      style={{ background: ch.color }}
+                      class="brand-soft w-10 h-10 rounded-full flex items-center justify-center text-xs font-semibold shrink-0"
+                      style={{ "--brand": ch.color }}
                     >
-                      {initials(ch.profile_name || ch.name)}
+                      <PlatformIcon platform={ch.platform} size={20} />
                     </div>
                   )}
                   <div class="min-w-0">
-                    <span class="text-xs font-medium" style={{ color: ch.color }}>
-                      {PLATFORM_LABELS[ch.platform] || ch.platform}
+                    <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                      <PlatformIcon platform={ch.platform} /> {PLATFORM_LABELS[ch.platform] || ch.platform}
                     </span>
-                    <h3 class="text-sm font-semibold mt-0.5 truncate">{ch.profile_name || ch.name}</h3>
+                    <h3 class="font-semibold mt-0.5 truncate">{ch.profile_name || ch.name}</h3>
                     {(ch.profile_handle || ch.handle) && (
                       <span class="text-xs text-muted-foreground truncate block">
                         {ch.profile_handle ? `@${ch.profile_handle}` : ch.handle}

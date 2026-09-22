@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SCHEMA = readFileSync(join(HERE, "..", "src", "server", "schema.sql"), "utf8");
+const SCHEMA = readFileSync(join(HERE, "..", "schema.sql"), "utf8");
 const BUNDLE = join(HERE, ".server.mjs");
 
 // A fresh module instance per scenario: the server holds module-level state

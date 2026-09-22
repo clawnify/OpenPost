@@ -3,6 +3,7 @@ import { Send, Save, ArrowLeft, Image, X, Upload, Loader2 } from "lucide-preact"
 import { useApp } from "../context";
 import { PLATFORM_LIMITS, PLATFORM_LABELS, mediaError, mediaShapeError, mediaTypeFromUrl } from "../types";
 import type { MediaItem } from "../types";
+import { PlatformIcon } from "./platform-icon";
 import type { Platform } from "../types";
 import { PostPreview, ChannelTabs } from "./previews";
 
@@ -225,7 +226,7 @@ export function PostComposer({ editId, navigate }: Props) {
         >
           <ArrowLeft size={16} /> Back
         </button>
-        <h1 class="text-xl font-semibold">{editId ? "Edit Post" : "New Post"}</h1>
+        <h1 class="text-[1.375rem] font-semibold tracking-[-0.01em]">{editId ? "Edit Post" : "New Post"}</h1>
       </div>
 
       <div class="flex gap-6">
@@ -241,13 +242,12 @@ export function PostComposer({ editId, navigate }: Props) {
               customizedIds={Object.keys(overrides).map(Number)}
             />
             <textarea
-              class={`w-full min-h-[200px] p-4 border rounded-lg text-sm resize-y focus:outline-none focus:ring-2 focus:ring-ring transition-colors ${
-                editorOverLimit ? "border-destructive focus:ring-destructive" : "border-border"
-              } ${
-                activeChannel && !isCustomized
-                  ? "bg-muted/40 text-muted-foreground cursor-default"
-                  : "bg-card"
+              // `.input` is unlayered CSS, so it outranks Tailwind's layered
+              // utilities; the inherited-draft dimming needs `!` to show.
+              class={`input h-auto min-h-[200px] p-4 text-sm resize-y ${
+                activeChannel && !isCustomized ? "bg-muted/40! text-muted-foreground! cursor-default" : ""
               }`}
+              style={editorOverLimit ? { boxShadow: "inset 0 0 0 1px var(--color-destructive-solid)" } : undefined}
               placeholder={
                 activeChannel
                   ? `What ${activeChannel.name} should post`
@@ -339,10 +339,10 @@ export function PostComposer({ editId, navigate }: Props) {
                 value={newMediaUrl}
                 onInput={(e) => setNewMediaUrl((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => e.key === "Enter" && addMedia()}
-                class="flex-1 px-3 py-2 bg-card border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                class="input flex-1"
               />
               <button
-                class="inline-flex items-center gap-1.5 px-3 py-2 border border-border rounded-md text-sm hover:bg-accent transition-colors disabled:opacity-50"
+                class="btn-secondary disabled:opacity-50"
                 onClick={addMedia}
                 disabled={!newMediaUrl.trim()}
               >
@@ -402,7 +402,7 @@ export function PostComposer({ editId, navigate }: Props) {
             <h3 class="text-sm font-medium mb-2">Schedule</h3>
             <input
               type="datetime-local"
-              class="w-full px-3 py-2 bg-card border border-border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              class="input"
               value={scheduledAt}
               onInput={(e) => setScheduledAt((e.target as HTMLInputElement).value)}
             />
@@ -414,7 +414,7 @@ export function PostComposer({ editId, navigate }: Props) {
             {channels.length === 0 ? (
               <p class="text-sm text-muted-foreground">
                 No channels yet.{" "}
-                <a href="/channels" onClick={(e) => { e.preventDefault(); navigate("/channels"); }} class="text-blue-600 hover:underline">Add one</a>
+                <a href="/channels" onClick={(e) => { e.preventDefault(); navigate("/channels"); }} class="underline decoration-border underline-offset-2 hover:decoration-foreground">Add one</a>
               </p>
             ) : (
               <div class="space-y-2">
@@ -423,7 +423,7 @@ export function PostComposer({ editId, navigate }: Props) {
                   return (
                     <label key={ch.id} class="flex items-center justify-between gap-3 cursor-pointer group">
                       <div class="flex items-center gap-2">
-                        <span class="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: ch.color }} />
+                        <span class="brand-soft inline-flex size-5 items-center justify-center rounded-full shrink-0" style={{ "--brand": ch.color }}><PlatformIcon platform={ch.platform} size={11} /></span>
                         <span class="text-sm">{ch.name}</span>
                       </div>
                       <button
@@ -436,7 +436,7 @@ export function PostComposer({ editId, navigate }: Props) {
                         }`}
                       >
                         <span
-                          class={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-lg ring-0 transition-transform ${
+                          class={`pointer-events-none block h-4 w-4 rounded-full bg-white shadow-raised ring-0 transition-transform ${
                             active ? "translate-x-4" : "translate-x-0"
                           }`}
                         />
@@ -476,14 +476,14 @@ export function PostComposer({ editId, navigate }: Props) {
           {/* Actions */}
           <div class="space-y-2 pt-2">
             <button
-              class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 border border-border rounded-md text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50"
+              class="btn-secondary w-full disabled:opacity-50"
               onClick={() => handleSave("draft")}
               disabled={saving || !hasContent}
             >
               <Save size={14} /> Save Draft
             </button>
             <button
-              class="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              class="btn-primary w-full disabled:opacity-50"
               onClick={() => handleSave(scheduledAt ? "scheduled" : "draft")}
               disabled={saving || !hasContent || overLimit}
             >

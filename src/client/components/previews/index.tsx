@@ -1,5 +1,6 @@
 import type { Channel, MediaItem } from "../../types";
 import { PLATFORM_LABELS } from "../../types";
+import { PlatformIcon } from "../platform-icon";
 import { LinkedInPreview } from "./linkedin-preview";
 import { XPreview } from "./x-preview";
 import { InstagramPreview } from "./instagram-preview";
@@ -83,12 +84,6 @@ export function PostPreview({ channel, content, media, timeLabel }: Props) {
   }
 }
 
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 // Avatar strip to switch which channel is being written and previewed. `null`
 // is the "All channels" tab — the shared draft every channel inherits unless it
@@ -132,12 +127,12 @@ export function ChannelTabs({
             type="button"
             onClick={() => onSelect(ch.id)}
             title={`${ch.name} · ${PLATFORM_LABELS[ch.platform] || ch.platform}${own ? " · has its own version" : ""}`}
-            class={`relative w-9 h-9 rounded-full text-white flex items-center justify-center text-xs font-semibold transition-all ${
-              active ? "ring-2 ring-offset-2 ring-primary" : "opacity-50 hover:opacity-100"
+            class={`brand-soft relative w-9 h-9 rounded-full flex items-center justify-center text-xs font-semibold transition-all ${
+              active ? "ring-2 ring-offset-2 ring-foreground" : "opacity-60 hover:opacity-100"
             }`}
-            style={{ background: ch.color }}
+            style={{ "--brand": ch.color }}
           >
-            {initials(ch.name)}
+            <PlatformIcon platform={ch.platform} size={16} />
             {own && (
               <span
                 class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-background"
