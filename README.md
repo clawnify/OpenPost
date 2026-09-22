@@ -14,7 +14,7 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 - **Drafts** -- save unfinished posts and come back to them later
 - **Channel management** -- add your social media accounts with platform detection and color coding
 - **Labels** -- categorize posts with colored labels for organization
-- **Media attachments** -- attach several images to a post; every platform publishes the whole set (carousel, gallery or multi-photo, whichever that platform calls it)
+- **Media attachments** -- attach several images to a post and every platform publishes the whole set (carousel, gallery or multi-photo, whichever that platform calls it), or attach one video and it goes out as a video post
 - **Analytics** -- bar charts showing posts per channel, per label, and daily activity
 - **Dashboard** -- at-a-glance stats, upcoming posts, and recent drafts
 - **Native previews** -- see the post as it will look on each selected platform before it goes out
@@ -24,19 +24,22 @@ Think of it as an open-source alternative to **Buffer**, **Hypefury**, **Typeful
 
 ### Supported Platforms
 
-| Platform | Character Limit | Images | Publishing |
-|----------|----------------|--------|------------|
-| X / Twitter | 280 | up to 4 | text, or a post with up to four images |
-| LinkedIn | 3,000 | up to 20 | text, or a post with up to twenty images |
-| Instagram | 2,200 | 1-10 | photo + caption; two or more images publish as a carousel (Business or Creator account, picked up from the connection) |
-| Facebook | 63,206 | no stated cap | text, one photo, or one feed post with several photos, as a Page you manage |
-| TikTok | 2,200 | 1-35 | photo post; the first image is the cover |
-| Bluesky | 300 | up to 4 | text, with images and link cards |
-| Mastodon | 500 | -- | coming soon |
-| Threads | 500 | -- | coming soon |
+| Platform | Character Limit | Images | Video | Publishing |
+|----------|----------------|--------|-------|------------|
+| X / Twitter | 280 | up to 4 | -- | text, or a post with up to four images |
+| LinkedIn | 3,000 | up to 20 | -- | text, or a post with up to twenty images |
+| Instagram | 2,200 | 1-10 | -- | photo + caption; two or more images publish as a carousel (Business or Creator account, picked up from the connection) |
+| Facebook | 63,206 | no stated cap | yes | text, one photo, one feed post with several photos, or a video, as a Page you manage |
+| TikTok | 2,200 | 1-35 | yes | photo post (the first image is the cover), or a video post |
+| Bluesky | 300 | up to 4 | -- | text, with images and link cards |
+| Mastodon | 500 | -- | -- | coming soon |
+| Threads | 500 | -- | -- | coming soon |
 
-Attaching more images than a platform accepts fails **that channel only**, with the
-reason on the post, rather than quietly publishing a subset -- the other channels in
+A post carries either images or one video, never both -- no platform here takes a mix.
+
+Attaching more images than a platform accepts, or a video to a channel with no video
+column above, fails **that channel only**, with the reason on the post, rather than
+quietly publishing a subset or publishing the text on its own -- the other channels in
 the fan-out still go out. The composer warns you before you get there.
 
 Connect each account once in Clawnify (Settings → Integrations), then add it as a channel here. Facebook channels are Pages: the channel form lists the Pages the connected account manages so you can pick one.
@@ -100,7 +103,8 @@ database rather than left to the caller.
 ```
 src/
   shared/
-    platforms.ts    -- Platform limits, colours, labels; the media caps the server enforces and the composer warns on
+    platforms.ts    -- Platform limits, colours, labels; which platforms take video, and the media rules the server enforces and the composer warns on
+    media.ts        -- What an attachment is (image or video) and how its type is decided
   server/
     index.ts        -- Hono API with D1 + credentials middleware
     db.ts           -- D1-native database adapter

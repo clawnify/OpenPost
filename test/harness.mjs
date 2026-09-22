@@ -47,13 +47,36 @@ function storage(db) {
  */
 function broker(plan = {}) {
   const sends = [];
+  // Every status check the app made, so "did it confirm before calling this
+  // published" is a counted fact rather than something inferred.
+  const polls = [];
   const linkedinOk = plan.linkedinOk ?? (() => true);
+  // TikTok's upload action can succeed while leaving the video unpublished — a
+  // draft in the creator's inbox rather than a post on their profile. The
+  // scenario picks which of the two happened.
+  const tiktokPublished = plan.tiktokPublished ?? (() => true);
+  // TikTok only *accepts* a post synchronously; whether it went live is a
+  // separate status call, and the scenario decides what that call reports.
+  // Called once per poll, so a scenario can return PROCESSING_UPLOAD forever to
+  // reproduce a post the app never gets a verdict on.
+  const tiktokStatus = plan.tiktokStatus ?? (() => ({ status: "PUBLISH_COMPLETE", publicaly_available_post_id: ["7500"] }));
+  // Facebook video is accepted the same way: the Page's video list then says
+  // ready / processing / error. null means the video isn't listed at all.
+  const facebookVideoStatus = plan.facebookVideoStatus ?? (() => "ready");
+  const fbVideos = [];
   return {
     sends,
+    polls,
     binding: {
       async getToken() { return null; },
       async listConnected() { return []; },
       async getCredentials() { return null; },
+      // The broker stages a file and hands back an opaque descriptor; the app's
+      // only correct use is to forward it, so the stub returns a marked object
+      // the assertions can recognise on the far side.
+      async stageFile(service, toolSlug, file) {
+        return { descriptor: { staged: file.url, tool: toolSlug }, error: null };
+      },
       async executeTool(service, toolSlug, args) {
         switch (toolSlug) {
           case "TWITTER_USER_LOOKUP_ME":
@@ -62,12 +85,55 @@ function broker(plan = {}) {
             return linkedinOk()
               ? { data: { id: "li-me", localizedFirstName: "Test", localizedLastName: "User" }, error: null, successful: true }
               : { data: null, error: "LinkedIn token expired", successful: false };
+          case "TWITTER_UPLOAD_MEDIA":
+            // Not a send: uploading media posts nothing. It only mints the id
+            // the tweet then attaches, so a tweet that lost its image still
+            // shows up below as a send with no media ids.
+            return { data: { data: { id: `media-${args.media?.staged ?? "?"}` } }, error: null, successful: true };
           case "TWITTER_CREATION_OF_A_POST":
-            sends.push({ service, toolSlug, text: args.text });
+            sends.push({ service, toolSlug, text: args.text, images: args.media_media_ids });
             return { data: { data: { id: `tw-${sends.length}` } }, error: null, successful: true };
           case "LINKEDIN_CREATE_LINKED_IN_POST":
-            sends.push({ service, toolSlug, text: args.commentary });
+            sends.push({ service, toolSlug, text: args.commentary, images: args.images });
             return { data: { x_restli_id: `li-${sends.length}` }, error: null, successful: true };
+          case "TIKTOK_UPLOAD_VIDEO":
+            sends.push({ service, toolSlug, text: args.caption, video: args.file_to_upload?.staged });
+            return {
+              data: { publish_id: `tt-${sends.length}`, published: tiktokPublished(), upload_completed: true },
+              error: null,
+              successful: true,
+            };
+          case "TIKTOK_POST_PHOTO":
+            sends.push({ service, toolSlug, text: args.description, images: args.photo_images });
+            return { data: { publish_id: `tt-${sends.length}` }, error: null, successful: true };
+          case "TIKTOK_FETCH_PUBLISH_STATUS": {
+            // Not a send: asking TikTok what happened posts nothing. Composio
+            // wraps TikTok's body twice — data.data plus a sibling data.error.
+            polls.push(args.publish_id);
+            const body = tiktokStatus(args.publish_id, polls.length);
+            return { data: { data: body, error: { code: "ok", message: "", log_id: "l1" } }, error: null, successful: true };
+          }
+          case "FACEBOOK_CREATE_VIDEO_POST": {
+            sends.push({ service, toolSlug, text: args.description, video: args.file_url });
+            const id = `fbv-${sends.length}`;
+            fbVideos.push(id);
+            return { data: { id }, error: null, successful: true };
+          }
+          case "FACEBOOK_GET_PAGE_VIDEOS": {
+            // Not a send: reading the Page's videos posts nothing.
+            polls.push(`fb:${args.page_id}`);
+            const data = fbVideos
+              .map((id) => ({ id, status: facebookVideoStatus(id, polls.length), permalink_url: `/thepage/videos/${id}/` }))
+              .filter((v) => v.status !== null)
+              .map((v) => ({ ...v, status: { video_status: v.status } }));
+            return { data: { data }, error: null, successful: true };
+          }
+          case "FACEBOOK_CREATE_POST":
+            sends.push({ service, toolSlug, text: args.message });
+            return { data: { id: `fb-${sends.length}` }, error: null, successful: true };
+          case "FACEBOOK_CREATE_PHOTO_POST":
+            sends.push({ service, toolSlug, text: args.message, images: [args.url] });
+            return { data: { post_id: `fb-${sends.length}` }, error: null, successful: true };
           default:
             return { data: null, error: `harness has no stub for ${toolSlug}`, successful: false };
         }
@@ -76,13 +142,37 @@ function broker(plan = {}) {
   };
 }
 
+// The managed queue is a plain HTTPS call, so intercepting fetch is enough to
+// see what the app asked the platform to do later. Installed once — scenarios
+// run in one process — and each boot only reads the entries made after it.
+const enqueued = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  if (String(url).startsWith("https://services.clawnify.com/queue")) {
+    enqueued.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
+    return new Response(JSON.stringify({ job_id: `job-${enqueued.length}` }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return realFetch(url, init);
+};
+
 /** A running app with an empty database, plus helpers to drive it over HTTP. */
-export async function boot(plan) {
+export async function boot(plan = {}) {
   const db = new DatabaseSync(":memory:");
   db.exec(SCHEMA);
   const { default: app } = await import(`${BUNDLE}?${instance++}`);
   const b = broker(plan);
-  const env = { STORAGE: storage(db), CREDENTIALS: b.binding, CLAWNIFY_ORG_ID: "org-test" };
+  const queueMark = enqueued.length;
+  const env = {
+    STORAGE: storage(db),
+    CREDENTIALS: b.binding,
+    CLAWNIFY_ORG_ID: "org-test",
+    // Present only when the scenario is about deferred work. Its absence is the
+    // self-hosted deploy, where scheduling degrades to nothing.
+    ...(plan.queue ? { CLAWNIFY_TOKEN: "tok-test" } : {}),
+  };
 
   const send = async (method, path, body) => {
     const res = await app.request(
@@ -98,6 +188,9 @@ export async function boot(plan) {
   return {
     db,
     sends: b.sends,
+    polls: b.polls,
+    // Jobs this scenario asked the managed queue to run later.
+    get queued() { return enqueued.slice(queueMark); },
     get: (path) => send("GET", path),
     post: (path, body) => send("POST", path, body ?? {}),
     put: (path, body) => send("PUT", path, body),

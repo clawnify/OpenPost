@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "preact/hooks";
 import { Send, Save, ArrowLeft, Image, X, Upload, Loader2 } from "lucide-preact";
 import { useApp } from "../context";
-import { PLATFORM_LIMITS, PLATFORM_LABELS, mediaLimitError } from "../types";
+import { PLATFORM_LIMITS, PLATFORM_LABELS, mediaError, mediaShapeError, mediaTypeFromUrl } from "../types";
+import type { MediaItem } from "../types";
 import type { Platform } from "../types";
 import { PostPreview, ChannelTabs } from "./previews";
 
@@ -25,7 +26,7 @@ interface Props {
 }
 
 export function PostComposer({ editId, navigate }: Props) {
-  const { channels, labels, posts, createPost, updatePost, uploadImage } = useApp();
+  const { channels, labels, posts, createPost, updatePost, uploadMedia } = useApp();
 
   const existing = editId ? posts.find((p) => p.id === editId) : null;
 
@@ -38,7 +39,7 @@ export function PostComposer({ editId, navigate }: Props) {
   const [selectedChannels, setSelectedChannels] = useState<number[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState("");
-  const [mediaUrls, setMediaUrls] = useState<string[]>([]);
+  const [media, setMedia] = useState<MediaItem[]>([]);
   const [newMediaUrl, setNewMediaUrl] = useState("");
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -56,7 +57,7 @@ export function PostComposer({ editId, navigate }: Props) {
       setSelectedChannels(existing.channels.map((c) => c.id));
       setSelectedLabels(existing.labels.map((l) => l.id));
       setScheduledAt(existing.scheduled_at ? utcToLocalInput(existing.scheduled_at) : "");
-      setMediaUrls(existing.media.map((m) => m.url));
+      setMedia(existing.media.map((m) => ({ url: m.url, type: m.type })));
     }
   }, [existing?.id]);
 
@@ -95,20 +96,26 @@ export function PostComposer({ editId, navigate }: Props) {
     ? previewChannels.some((c) => (overrides[c.id] ?? content).trim())
     : !!content.trim();
 
-  // Selected channels whose platform can't carry this many images. Publishing
-  // fails those channels rather than posting a truncated set, so say it here —
-  // while the images are still on screen and removable — instead of letting it
-  // surface as a delivery error after the fact.
+  // Why a selected channel can't carry these attachments — too many images, a
+  // video that platform has no path for, or a mix no platform takes.
+  // Publishing fails those channels rather than posting a truncated set, so say
+  // it here, while the attachments are still on screen and removable, instead
+  // of letting it surface as a delivery error after the fact.
+  //
+  // The shape errors don't depend on a channel, so they show even before one is
+  // picked: "images or a video, not both" is worth saying the moment it is true.
   const mediaWarnings = useMemo(() => {
     const messages = new Set<string>();
+    const shape = mediaShapeError(media);
+    if (shape) messages.add(shape);
     for (const c of channels) {
       if (!selectedChannels.includes(c.id)) continue;
-      const msg = mediaLimitError(c.platform, mediaUrls.length);
+      const msg = mediaError(c.platform, media);
       // Two channels on the same platform share one message.
       if (msg) messages.add(msg);
     }
     return [...messages];
-  }, [selectedChannels, channels, mediaUrls.length]);
+  }, [selectedChannels, channels, media]);
 
   // Which tab is open: null = the shared draft ("All channels"), otherwise the
   // channel being written and previewed. Falls back to the shared draft when
@@ -158,26 +165,27 @@ export function PostComposer({ editId, navigate }: Props) {
     );
   };
 
+  // A pasted link has only its path to go on, so the extension decides whether
+  // it is a video. An upload doesn't guess — the server reads the file's MIME.
   const addMedia = () => {
-    if (newMediaUrl.trim()) {
-      setMediaUrls((prev) => [...prev, newMediaUrl.trim()]);
-      setNewMediaUrl("");
-    }
+    const url = newMediaUrl.trim();
+    if (!url) return;
+    setMedia((prev) => [...prev, { url, type: mediaTypeFromUrl(url) }]);
+    setNewMediaUrl("");
   };
 
   const uploadFiles = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setUploading(true);
     for (const file of Array.from(files)) {
-      if (!file.type.startsWith("image/")) continue;
-      const url = await uploadImage(file);
-      if (url) setMediaUrls((prev) => [...prev, url]);
+      const item = await uploadMedia(file);
+      if (item) setMedia((prev) => [...prev, item]);
     }
     setUploading(false);
   };
 
   const removeMedia = (index: number) => {
-    setMediaUrls((prev) => prev.filter((_, i) => i !== index));
+    setMedia((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSave = async (status: string) => {
@@ -197,7 +205,7 @@ export function PostComposer({ editId, navigate }: Props) {
       channel_ids: selectedChannels,
       channel_content,
       label_ids: selectedLabels,
-      media_urls: mediaUrls,
+      media,
     };
     if (editId) {
       await updatePost(editId, data);
@@ -311,12 +319,12 @@ export function PostComposer({ editId, navigate }: Props) {
               ) : (
                 <>
                   <Upload size={18} />
-                  <span><span class="text-foreground font-medium">Upload images</span> or drag &amp; drop</span>
+                  <span><span class="text-foreground font-medium">Upload images or a video</span> or drag &amp; drop</span>
                 </>
               )}
               <input
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 multiple
                 class="hidden"
                 onChange={(e) => { uploadFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }}
@@ -327,7 +335,7 @@ export function PostComposer({ editId, navigate }: Props) {
             <div class="flex gap-2 mt-2">
               <input
                 type="url"
-                placeholder="…or paste an image URL"
+                placeholder="…or paste an image or video URL"
                 value={newMediaUrl}
                 onInput={(e) => setNewMediaUrl((e.target as HTMLInputElement).value)}
                 onKeyDown={(e) => e.key === "Enter" && addMedia()}
@@ -348,11 +356,17 @@ export function PostComposer({ editId, navigate }: Props) {
                 ))}
               </div>
             )}
-            {mediaUrls.length > 0 && (
+            {media.length > 0 && (
               <div class="flex gap-2 mt-3 flex-wrap">
-                {mediaUrls.map((url, i) => (
+                {media.map((item, i) => (
                   <div key={i} class="relative group w-20 h-20 rounded-md overflow-hidden border border-border">
-                    <img src={url} alt="" class="w-full h-full object-cover" />
+                    {item.type === "video" ? (
+                      // muted + playsinline so the browser paints a first frame
+                      // without the tile becoming something that plays audio.
+                      <video src={item.url} class="w-full h-full object-cover bg-black" muted playsInline preload="metadata" />
+                    ) : (
+                      <img src={item.url} alt="" class="w-full h-full object-cover" />
+                    )}
                     <button
                       class="absolute top-0.5 right-0.5 p-0.5 bg-black/60 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={() => removeMedia(i)}
@@ -374,7 +388,7 @@ export function PostComposer({ editId, navigate }: Props) {
               <PostPreview
                 channel={activePreviewChannel}
                 content={overrides[activePreviewChannel.id] ?? content}
-                imageUrl={mediaUrls[0]}
+                media={media[0]}
                 timeLabel="Now"
               />
             </div>

@@ -1,4 +1,4 @@
-import type { Channel } from "../../types";
+import type { Channel, MediaItem } from "../../types";
 import { PLATFORM_LABELS } from "../../types";
 import { LinkedInPreview } from "./linkedin-preview";
 import { XPreview } from "./x-preview";
@@ -18,13 +18,13 @@ export function hasNativePreview(platform: string): boolean {
 interface Props {
   channel: Channel;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
 // Renders the post as it will appear on the channel's platform — a native card
 // when available, otherwise a generic text+attachments preview.
-export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
+export function PostPreview({ channel, content, media, timeLabel }: Props) {
   switch (channel.platform) {
     case "linkedin":
       return (
@@ -33,7 +33,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           authorHeadline={channel.profile_headline || channel.handle || undefined}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -44,7 +44,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           handle={channel.profile_handle || channel.handle || undefined}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -54,7 +54,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           username={channel.profile_handle || channel.handle || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -64,7 +64,7 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           pageName={channel.profile_name || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
@@ -74,12 +74,12 @@ export function PostPreview({ channel, content, imageUrl, timeLabel }: Props) {
           username={channel.profile_handle || channel.handle || channel.name}
           avatarUrl={channel.profile_avatar_url || undefined}
           content={content}
-          imageUrl={imageUrl}
+          media={media}
           timeLabel={timeLabel}
         />
       );
     default:
-      return <GenericPreview channel={channel} content={content} imageUrl={imageUrl} timeLabel={timeLabel} />;
+      return <GenericPreview channel={channel} content={content} media={media} timeLabel={timeLabel} />;
   }
 }
 
