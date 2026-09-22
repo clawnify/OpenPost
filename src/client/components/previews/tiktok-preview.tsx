@@ -1,10 +1,12 @@
 import { Heart, MessageCircle, Bookmark, Share, Music2, Image as ImageIcon } from "lucide-preact";
+import type { MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   username: string;
   avatarUrl?: string;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -21,20 +23,20 @@ function toUsername(name: string): string {
 
 const ACTIONS = [Heart, MessageCircle, Bookmark, Share];
 
-// Photo post only (matches this app's photo-first media model) — rendered as
-// TikTok's full-bleed vertical feed card with the caption + action rail
-// overlaid, rather than the actual short-form video player.
-export function TikTokPreview({ username, avatarUrl, content, imageUrl, timeLabel }: Props) {
+// TikTok's full-bleed vertical feed card, with the caption + action rail
+// overlaid. Carries a photo post or a video: PreviewMedia renders whichever
+// the post actually attached.
+export function TikTokPreview({ username, avatarUrl, content, media, timeLabel }: Props) {
   const handle = toUsername(username);
 
   return (
     <div class="relative bg-black rounded-2xl overflow-hidden w-[280px] aspect-[9/16] text-white mx-auto shadow-sm">
-      {imageUrl ? (
-        <img src={imageUrl} alt="" class="absolute inset-0 w-full h-full object-cover" />
+      {media ? (
+        <PreviewMedia media={media} class="absolute inset-0 w-full h-full object-cover" />
       ) : (
         <div class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40 bg-[#121212]">
           <ImageIcon size={32} />
-          <span class="text-xs">TikTok posts need an image</span>
+          <span class="text-xs">TikTok posts need an image or a video</span>
         </div>
       )}
       <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/10 to-transparent" />

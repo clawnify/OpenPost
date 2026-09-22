@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "preact/hooks";
+import { reportLocation } from "@clawnify/app/client";
 import type { View } from "../types";
 
 interface RouterState {
@@ -32,6 +33,11 @@ export function useRouter() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // Report every route change so the workspace can reopen this screen on reload.
+  useEffect(() => {
+    reportLocation(window.location.pathname + window.location.search);
+  }, [state.view, state.editId]);
 
   const navigate = useCallback((path: string) => {
     window.history.pushState(null, "", path);

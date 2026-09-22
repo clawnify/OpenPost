@@ -1,4 +1,4 @@
-import { Clock, Edit2, Trash2, Send, ExternalLink, AlertCircle } from "lucide-preact";
+import { Clock, Edit2, Trash2, Send, ExternalLink, AlertCircle, Hourglass } from "lucide-preact";
 import type { Post, Channel } from "../types";
 import { PLATFORM_LABELS } from "../types";
 import { PostPreview, hasNativePreview } from "./previews";
@@ -36,6 +36,19 @@ function ChannelChip({ ch }: { ch: Channel }) {
   const label = PLATFORM_LABELS[ch.platform] || ch.platform;
   const base = "brand-pill inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium";
 
+  // Sent, and the platform hasn't ruled on it yet — TikTok and Facebook video
+  // only accept a post synchronously, the verdict comes later. A pending row
+  // carrying a message is the one that has already gone out; a plain pending
+  // row hasn't. Showing them the same way would hide a post whose fate nobody
+  // knows.
+  if (ch.delivery_status === "pending" && ch.delivery_error) {
+    return (
+      <span class={`${base} opacity-75`} style={{ "--brand": ch.color }} title={ch.delivery_error}>
+        <PlatformIcon platform={ch.platform} /> {label} <Hourglass size={11} />
+      </span>
+    );
+  }
+
   if (ch.delivery_status === "failed") {
     return (
       <span class={`${base} opacity-60`} style={{ "--brand": ch.color }} title={ch.delivery_error || "Failed to publish"}>
@@ -69,7 +82,7 @@ function ChannelChip({ ch }: { ch: Channel }) {
 export function PostCard({ post, onEdit, onDelete, onPublish, preview, flat }: Props) {
   const excerpt = post.content.length > 140 ? post.content.slice(0, 140) + "..." : post.content;
   const previewChannel = preview ? post.channels.find((ch) => hasNativePreview(ch.platform)) : undefined;
-  const firstImage = post.media[0]?.url;
+  const firstMedia = post.media[0];
   const timeLabel = post.scheduled_at
     ? new Date(post.scheduled_at + (post.scheduled_at.includes("T") ? "" : "T00:00:00"))
         .toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
@@ -78,7 +91,7 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview, flat }: P
   return (
     <div class={preview ? "" : flat ? "pt-3 border-t border-border first:border-t-0 first:pt-0" : "card p-5"}>
       {previewChannel ? (
-        <PostPreview channel={previewChannel} content={post.content} imageUrl={firstImage} timeLabel={timeLabel} />
+        <PostPreview channel={previewChannel} content={post.content} media={firstMedia} timeLabel={timeLabel} />
       ) : (
         <p class="text-foreground leading-relaxed whitespace-pre-wrap">
           {excerpt || "(empty)"}
@@ -119,11 +132,21 @@ export function PostCard({ post, onEdit, onDelete, onPublish, preview, flat }: P
           )}
         </div>
         <div class="flex items-center gap-1">
-          {onPublish && (post.status === "scheduled" || post.status === "failed") && (
+          {/* A partial post is the one that most needs this button — some
+              channels went out, some didn't — and it used to be the one status
+              that couldn't reach it. Safe now that publishing skips channels
+              already delivered (publishPost, src/server/index.ts). */}
+          {onPublish && (post.status === "scheduled" || post.status === "failed" || post.status === "partial") && (
             <button
               onClick={() => onPublish(post.id)}
               class="icon-btn"
-              title={post.status === "failed" ? "Retry" : "Publish now"}
+              title={
+                post.status === "partial"
+                  ? "Retry the channels that failed"
+                  : post.status === "failed"
+                    ? "Retry"
+                    : "Publish now"
+              }
             >
               <Send size={14} />
             </button>

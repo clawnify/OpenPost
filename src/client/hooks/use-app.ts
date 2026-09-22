@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "preact/hooks";
 import { api } from "../api";
-import type { Post, Channel, Label, Stats } from "../types";
+import { MAX_VIDEO_BYTES } from "../types";
+import type { Post, Channel, Label, Stats, MediaItem, MediaType } from "../types";
 
 export function useAppState() {
   const [posts, setPosts] = useState<Post[]>([]);
@@ -72,14 +73,23 @@ export function useAppState() {
   }, [loadChannels]);
 
   // Upload an image to the app's storage; returns its public URL.
-  const uploadImage = useCallback(async (file: File): Promise<string | null> => {
+  // Upload one image or video. The server answers with the type it read off
+  // the file's own MIME, which is the only authoritative source for it — the
+  // filename lies and the composer would only be guessing.
+  const uploadMedia = useCallback(async (file: File): Promise<MediaItem | null> => {
+    // The server enforces this too; checking first is what stops a 60 MB
+    // upload from spending its whole trip to be rejected on arrival.
+    if (file.type.startsWith("video/") && file.size > MAX_VIDEO_BYTES) {
+      setError(`"${file.name}" is too large — videos are limited to ${Math.round(MAX_VIDEO_BYTES / (1024 * 1024))} MB.`);
+      return null;
+    }
     try {
       const fd = new FormData();
       fd.append("file", file);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
-      const data = (await r.json()) as { url?: string; error?: string };
+      const data = (await r.json()) as { url?: string; type?: MediaType; error?: string };
       if (!r.ok || !data.url) throw new Error(data.error || "Upload failed");
-      return data.url;
+      return { url: data.url, type: data.type === "video" ? "video" : "image" };
     } catch (e: any) { setError(e.message); return null; }
   }, []);
 
@@ -127,8 +137,11 @@ export function useAppState() {
     status?: string;
     scheduled_at?: string;
     channel_ids?: number[];
+    // Per-channel text overrides, keyed by channel id; omitted channels publish
+    // the shared draft.
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
-    media_urls?: string[];
+    media?: MediaItem[];
   }) => {
     try {
       const post = await api<Post>("POST", "/api/posts", data);
@@ -142,8 +155,9 @@ export function useAppState() {
     status?: string;
     scheduled_at?: string | null;
     channel_ids?: number[];
+    channel_content?: Record<string, string | null>;
     label_ids?: number[];
-    media_urls?: string[];
+    media?: MediaItem[];
   }) => {
     try {
       await api("PUT", `/api/posts/${id}`, data);
@@ -178,7 +192,7 @@ export function useAppState() {
     setCalendarMonth,
     loadPosts, loadStats, loadCalendar,
     createChannel, updateChannel, deleteChannel, syncChannelProfile,
-    uploadImage,
+    uploadMedia,
     createLabel, updateLabel, deleteLabel,
     createPost, updatePost, deletePost, publishPost,
   };

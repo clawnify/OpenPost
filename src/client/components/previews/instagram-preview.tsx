@@ -1,11 +1,13 @@
 import { useState } from "preact/hooks";
 import { MoreHorizontal, Heart, MessageCircle, Send, Bookmark, Image as ImageIcon } from "lucide-preact";
+import type { MediaItem } from "../../types";
+import { PreviewMedia } from "./preview-media";
 
 interface Props {
   username: string;
   avatarUrl?: string;
   content: string;
-  imageUrl?: string;
+  media?: MediaItem;
   timeLabel?: string;
 }
 
@@ -23,7 +25,7 @@ function toUsername(name: string): string {
 // Instagram truncates captions after ~125 chars behind a "… more".
 const COLLAPSE_AT = 125;
 
-export function InstagramPreview({ username, avatarUrl, content, imageUrl, timeLabel }: Props) {
+export function InstagramPreview({ username, avatarUrl, content, media, timeLabel }: Props) {
   const [expanded, setExpanded] = useState(false);
   const handle = toUsername(username);
 
@@ -45,9 +47,10 @@ export function InstagramPreview({ username, avatarUrl, content, imageUrl, timeL
         <MoreHorizontal size={18} class="text-[#262626] shrink-0" />
       </div>
 
-      {/* Image (photo-first; IG requires one) */}
-      {imageUrl ? (
-        <img src={imageUrl} alt="" class="w-full aspect-square object-cover bg-[#fafafa]" />
+      {/* Instagram requires an attachment — this app publishes photo posts, so
+          a video here is a channel that will fail rather than a Reel. */}
+      {media ? (
+        <PreviewMedia media={media} class="w-full aspect-square object-cover bg-[#fafafa]" />
       ) : (
         <div class="w-full aspect-square bg-[#fafafa] border-y border-[#efefef] flex flex-col items-center justify-center gap-2 text-[#8e8e8e]">
           <ImageIcon size={32} />

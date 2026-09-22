@@ -3,22 +3,24 @@ export type PostStatus = "draft" | "scheduled" | "published" | "partial" | "fail
 // Per-channel delivery state on a post's channel (Postiz-style). Present on the
 // Channel objects returned inside a Post; absent in the standalone channel list.
 export type DeliveryStatus = "pending" | "published" | "failed";
-export type Platform = "twitter" | "linkedin" | "instagram" | "facebook" | "bluesky" | "mastodon" | "threads" | "tiktok";
-
-// The platforms the server can actually publish to — the single source the
-// channel picker offers. It MUST track the cases in publishToChannel()
-// (src/server/index.ts): a platform here with no server case would let a user
-// schedule posts that only fail at send time (the mastodon/threads trap this
-// list closes); a server case missing here is simply not offered.
-// mastodon/threads stay out until they have a publish path.
-export const PUBLISHABLE_PLATFORMS: Platform[] = [
-  "twitter",
-  "linkedin",
-  "instagram",
-  "facebook",
-  "tiktok",
-  "bluesky",
-];
+// Platform metadata (limits, colours, labels, the publishable list) lives in
+// src/shared/platforms.ts because the server enforces the same tables. Re-exported
+// here so client code keeps importing platform facts from one place.
+export {
+  PUBLISHABLE_PLATFORMS,
+  PLATFORM_LIMITS,
+  PLATFORM_MEDIA_LIMITS,
+  PLATFORM_COLORS,
+  PLATFORM_LABELS,
+  MAX_VIDEO_BYTES,
+  mediaError,
+  mediaShapeError,
+} from "../shared/platforms";
+export type { Platform } from "../shared/platforms";
+import type { Platform } from "../shared/platforms";
+export { mediaTypeFromUrl } from "../shared/media";
+export type { MediaType, MediaItem } from "../shared/media";
+import type { MediaType } from "../shared/media";
 
 // A Facebook Page the connected account manages (GET /api/platforms/facebook/pages).
 export interface FacebookPage {
@@ -26,39 +28,6 @@ export interface FacebookPage {
   name: string;
   username: string | null;
 }
-
-export const PLATFORM_LIMITS: Record<Platform, number> = {
-  twitter: 280,
-  linkedin: 3000,
-  instagram: 2200,
-  facebook: 63206,
-  bluesky: 300,
-  mastodon: 500,
-  threads: 500,
-  tiktok: 2200,
-};
-
-export const PLATFORM_COLORS: Record<Platform, string> = {
-  twitter: "#1da1f2",
-  linkedin: "#0a66c2",
-  instagram: "#e4405f",
-  facebook: "#1877f2",
-  bluesky: "#0085ff",
-  mastodon: "#6364ff",
-  threads: "#000000",
-  tiktok: "#00f2ea",
-};
-
-export const PLATFORM_LABELS: Record<Platform, string> = {
-  twitter: "X / Twitter",
-  linkedin: "LinkedIn",
-  instagram: "Instagram",
-  facebook: "Facebook",
-  bluesky: "Bluesky",
-  mastodon: "Mastodon",
-  threads: "Threads",
-  tiktok: "TikTok",
-};
 
 export interface Channel {
   id: number;
@@ -77,6 +46,10 @@ export interface Channel {
   profile_avatar_url?: string | null;
   profile_headline?: string | null;
   profile_synced_at?: string | null;
+  // This channel's own version of the post text, when the author customized it.
+  // Null/absent means it publishes the post's shared draft. Only populated on
+  // channels nested in a Post.
+  content_override?: string | null;
   // Per-channel delivery state — only populated on channels nested in a Post.
   delivery_status?: DeliveryStatus;
   delivery_ref?: string | null;
@@ -96,7 +69,7 @@ export interface Media {
   id: number;
   post_id: number;
   url: string;
-  type: string;
+  type: MediaType;
   created_at: string;
 }
 
