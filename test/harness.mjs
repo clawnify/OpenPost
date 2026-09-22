@@ -163,7 +163,19 @@ function broker(plan = {}) {
 // run in one process — and each boot only reads the entries made after it.
 const enqueued = [];
 const realFetch = globalThis.fetch;
+
+// The queue signs each delivery to /api/internal/publish with an ES256 key the
+// app looks up by id, falling back to the platform's JWKS for an id it doesn't
+// embed. Serving a test key there lets a scenario send a delivery the app
+// genuinely verifies, rather than a route that skips the check.
+const DELIVERY_KID = "harness-test-key";
+const deliveryKeys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+const deliveryJwk = { ...(await crypto.subtle.exportKey("jwk", deliveryKeys.publicKey)), kid: DELIVERY_KID };
+
 globalThis.fetch = async (url, init) => {
+  if (String(url) === "https://services.clawnify.com/.well-known/jwks.json") {
+    return new Response(JSON.stringify({ keys: [deliveryJwk] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  }
   if (String(url).startsWith("https://services.clawnify.com/queue")) {
     enqueued.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
     return new Response(JSON.stringify({ job_id: `job-${enqueued.length}` }), {
@@ -208,6 +220,24 @@ export async function boot(plan = {}) {
     // Jobs this scenario asked the managed queue to run later.
     get queued() { return enqueued.slice(queueMark); },
     get: (path) => send("GET", path),
+    // A queue delivery, signed the way the platform signs one.
+    deliver: async (payload) => {
+      const raw = JSON.stringify(payload);
+      const ts = String(Math.floor(Date.now() / 1000));
+      const sig = new Uint8Array(await crypto.subtle.sign(
+        { name: "ECDSA", hash: "SHA-256" }, deliveryKeys.privateKey, new TextEncoder().encode(`${ts}.${raw}`)));
+      const res = await app.request("/api/internal/publish", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Queue-Signature": btoa(String.fromCharCode(...sig)),
+          "X-Queue-Timestamp": ts,
+          "X-Queue-Key-Id": DELIVERY_KID,
+        },
+        body: raw,
+      }, env);
+      return { status: res.status, body: await res.json().catch(() => null) };
+    },
     post: (path, body) => send("POST", path, body ?? {}),
     put: (path, body) => send("PUT", path, body),
     del: (path) => send("DELETE", path),

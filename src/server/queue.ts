@@ -25,6 +25,9 @@ export async function scheduleDelivery(opts: {
   origin: string;
   postId: number;
   runAt: string; // ISO-8601
+  // A follow-up that only re-checks channels a platform hasn't confirmed, as
+  // opposed to the post's scheduled delivery. See publishPost's `mode`.
+  recheck?: boolean;
 }): Promise<string | null> {
   const runAtMs = Date.parse(opts.runAt);
   try {
@@ -36,11 +39,12 @@ export async function scheduleDelivery(opts: {
       },
       body: JSON.stringify({
         target_url: `${opts.origin}/api/internal/publish`,
-        payload: { post_id: opts.postId },
+        payload: { post_id: opts.postId, ...(opts.recheck ? { recheck: true } : {}) },
         run_at: new Date(runAtMs).toISOString(),
         // Reschedule to a new time = new key = new job; a retried identical
-        // submit dedupes to the same job.
-        idempotency_key: `post:${opts.postId}:${runAtMs}`,
+        // submit dedupes to the same job. Re-checks get their own namespace so
+        // one can never dedupe into, or stand in for, a scheduled delivery.
+        idempotency_key: `${opts.recheck ? "recheck" : "post"}:${opts.postId}:${runAtMs}`,
       }),
     });
     if (!res.ok) {
