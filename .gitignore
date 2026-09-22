@@ -7,3 +7,4 @@ data.db-shm
 .dev.vars
 .wrangler/
 .clawnify/
+test/.server.mjs
