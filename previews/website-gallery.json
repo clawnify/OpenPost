@@ -1,0 +1,30 @@
+[
+  {
+    "src": "previews/compose.png",
+    "alt": "Conceptual composer with four channel tabs. The LinkedIn tab is open and its own longer version of the post is being typed, with a 3,000-character count. Behind it, the shared draft that goes to every other channel, counted against X's 280.",
+    "caption": "One draft, a version per channel.",
+    "width": 1600,
+    "height": 1000
+  },
+  {
+    "src": "previews/previews.png",
+    "alt": "Conceptual native previews: an Instagram carousel post showing the first of three images, in front of a LinkedIn post preview with the longer LinkedIn version of the text.",
+    "caption": "See it the way each platform shows it.",
+    "width": 1600,
+    "height": 1000
+  },
+  {
+    "src": "previews/retry.png",
+    "alt": "Conceptual queue card for a partial post: Instagram, LinkedIn and Bluesky published, X failed with the platform's reason shown. The retry button is being clicked and its tooltip reads Retry the channels that failed.",
+    "caption": "A failed channel never takes the others down.",
+    "width": 1600,
+    "height": 1000
+  },
+  {
+    "src": "previews/media.png",
+    "alt": "Conceptual media panel with an image being dragged onto the upload area, held by a closed-hand cursor, above three attached carousel images. Behind it, how many images each platform takes.",
+    "caption": "Carousels and video on every platform.",
+    "width": 1600,
+    "height": 1000
+  }
+]
