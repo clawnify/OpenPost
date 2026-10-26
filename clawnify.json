@@ -1,7 +1,7 @@
 {
   "$schema": "https://app.clawnify.com/schema/v1/clawnify.json",
   "name": "Social posts",
-  "description": "Social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics. An open-source alternative to Postiz, Buffer and Hypefury.",
+  "description": "Social media post scheduler with a calendar view, multi-channel composer, queue management, and analytics. An open-source alternative to Postiz, Buffer, Hypefury and Typefully.",
   "icon": "icon.svg",
   "app": {
     "framework": "preact+hono",
