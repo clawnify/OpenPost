@@ -3,13 +3,13 @@
   <img src="readme-banner.png" alt="OpenPost: one post written once and scheduled to Instagram, LinkedIn, X and Bluesky, with the LinkedIn version and the Instagram carousel previewed before it goes out" width="100%" />
 </picture>
 
-# OpenPost: The Open-Source Postiz Alternative
+# OpenPost: The Open-Source Postiz, Buffer & Hypefury Alternative
 
 [![Deploy with Clawnify](https://app.clawnify.com/deploy-button.svg)](https://app.clawnify.com/deploy?repo=clawnify/OpenPost)
 
 Write a post once, give any channel its own version, and schedule it to Instagram, LinkedIn, X, TikTok, Facebook and Bluesky from one calendar. OpenPost is a social media scheduler with a multi-channel composer, native previews, a queue, drafts and analytics. An open-source app template provided by [Clawnify.com](https://clawnify.com).
 
-Think of it as an open-source alternative to **Postiz**, **Buffer**, **Hypefury** and **Typefully**: a complete content scheduling system you can deploy and change to fit how your team posts.
+Think of it as an open-source alternative to **Postiz**, **Buffer**, **Hypefury**, **Typefully** and **Twitter Hunter**: a complete content scheduling system you can deploy and change to fit how your team posts.
 
 ## See it in action
 
