@@ -1,11 +1,11 @@
 import { createApp } from "@clawnify/app";
 import { query, get, run } from "./db";
-import { initCredentials, executeTool, getCredentials, stageFile } from "./credentials";
+import { initCredentials, executeTool, getCredentials, stageFile, listConnections } from "./credentials";
 import type { CredentialServiceBinding, StagedFile } from "./credentials";
 import { publishToBluesky, blueskyProfile, type BlueskyCreds } from "./bluesky";
 import { scheduleDelivery, cancelDelivery, verifyDelivery } from "./queue";
 import { initUploads, uploadsEnabled, putUpload, getUpload, makeKey } from "./uploads";
-import { mediaError, MAX_VIDEO_BYTES } from "../shared/platforms";
+import { mediaError, MAX_VIDEO_BYTES, PLATFORM_LABELS, MULTI_ACCOUNT_PLATFORMS } from "../shared/platforms";
 import { splitMedia, toMediaItem, mediaTypeFromMime, type MediaItem } from "../shared/media";
 import { awaitPublish, tiktokPostUrl } from "./tiktok";
 import { pollOutcome, type PublishOutcome } from "./confirm";
@@ -258,7 +258,15 @@ async function recheckChannel(channel: any, base: { channelId: number; channel: 
   if (channel.delivery_status !== "pending" || !channel.delivery_ref) return null;
   const confirm = CONFIRMERS[channel.platform];
   if (!confirm) return null;
-  const r = await confirm(channel, channel.delivery_ref as string);
+  // Asked as the account that made the post. If that account has since been
+  // disconnected there is no one to ask, so it stays pending and the follow-up
+  // ladder decides, rather than asking the default account about a post it
+  // never made.
+  const who = await channelAccount(channel);
+  const r: Settled =
+    "error" in who
+      ? { success: false, pending: true, ref: channel.delivery_ref as string, error: who.error }
+      : await confirm(channel, channel.delivery_ref as string, who.account);
   // The claim has already bumped attempts, so this delivery is attempt n+1.
   const tries = (Number(channel.delivery_attempts) || 0) + 1;
   if (r.pending && tries > RECHECK_DELAYS_S.length) {
@@ -299,6 +307,12 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
   const rejected = mediaError(channel.platform, media);
   if (rejected) return { ...base, success: false, error: rejected };
 
+  // The connected account this channel publishes as, named on every call made
+  // for it. Undefined is the org's default connection.
+  const who = await channelAccount(channel);
+  if ("error" in who) return { ...base, success: false, error: who.error };
+  const account = who.account;
+
   switch (channel.platform) {
     case "twitter": {
       // Composio execute (raw tokens are permanently redacted post-incident).
@@ -308,7 +322,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
       if (imageUrls.length) {
         const ids: string[] = [];
         for (const url of imageUrls) {
-          const up = await uploadTwitterMedia(url);
+          const up = await uploadTwitterMedia(url, account);
           if ("error" in up) return { ...base, success: false, error: up.error };
           ids.push(up.mediaId);
         }
@@ -317,7 +331,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
       const r = await executeTool("twitter", "TWITTER_CREATION_OF_A_POST", {
         text: content,
         ...(mediaIds ? { media_media_ids: mediaIds } : {}),
-      });
+      }, account);
       if (!r) return { ...base, success: false, error: "No Twitter credentials. Connect Twitter in Clawnify." };
       const ref = (r.data as { data?: { id?: string } } | null)?.data?.id;
       const url = ref ? `https://x.com/i/status/${ref}` : undefined;
@@ -326,7 +340,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
     case "linkedin": {
       // Composio permanently redacts raw tokens (May 2026 incident), so post
       // via Composio execute — it holds the real token server-side.
-      const me = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {});
+      const me = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {}, account);
       if (!me?.successful) return { ...base, success: false, error: me?.error || "LinkedIn not connected" };
       const id = (me.data as { id?: string } | null)?.id;
       if (!id) return { ...base, success: false, error: "could not resolve LinkedIn member id" };
@@ -353,7 +367,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
         visibility: "PUBLIC",
         lifecycleState: "PUBLISHED",
         ...(images ? { images } : {}),
-      });
+      }, account);
       const ref = (r?.data as { x_restli_id?: string } | null)?.x_restli_id;
       const url = ref ? `https://www.linkedin.com/feed/update/${ref}` : undefined;
       return { ...base, success: !!r?.successful, error: r?.successful ? undefined : (r?.error || "LinkedIn post failed"), ref, url };
@@ -371,7 +385,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
       // used to call — are both marked deprecated in Composio's catalogue, and
       // the carousel container has no deprecated publish partner anyway.
       if (!imageUrls.length) return { ...base, success: false, error: "Instagram requires an image." };
-      const ig = await resolveInstagramAccount(channel);
+      const ig = await resolveInstagramAccount(channel, account);
       if ("error" in ig) return { ...base, success: false, error: ig.error };
       const igUserId = ig.id;
       const container =
@@ -380,12 +394,12 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
               ig_user_id: igUserId,
               image_url: imageUrls[0],
               caption: content,
-            })
+            }, account)
           : await executeTool("instagram", "INSTAGRAM_CREATE_CAROUSEL_CONTAINER", {
               ig_user_id: igUserId,
               child_image_urls: imageUrls,
               caption: content,
-            });
+            }, account);
       if (!container) return { ...base, success: false, error: "No Instagram credentials. Connect Instagram in Clawnify." };
       if (!container.successful) return { ...base, success: false, error: container.error || "Instagram container failed" };
       const creationId = (container.data as { id?: string } | null)?.id;
@@ -393,7 +407,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
       const pub = await executeTool("instagram", "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", {
         ig_user_id: igUserId,
         creation_id: creationId,
-      });
+      }, account);
       const ref = (pub?.data as { id?: string } | null)?.id;
       return { ...base, success: !!pub?.successful, error: pub?.successful ? undefined : (pub?.error || "Instagram publish failed"), ref };
     }
@@ -415,7 +429,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
           caption: content.slice(0, 2200),
           privacy_level: "PUBLIC_TO_EVERYONE",
           publish: true,
-        });
+        }, account);
         if (!up) return { ...base, success: false, error: "No TikTok credentials. Connect TikTok in Clawnify." };
         const d = ((up.data as any)?.data ?? up.data ?? {}) as { publish_id?: string; published?: boolean };
         if (!up.successful) return { ...base, success: false, error: tiktokError(up.error, up.data) };
@@ -426,7 +440,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
           return { ...base, success: false, ref: d.publish_id,
             error: "TikTok took the video but didn't publish it — it's waiting as a draft in the TikTok app." };
         }
-        return { ...base, ...(await settleTikTok(channel, d.publish_id)) };
+        return { ...base, ...(await settleTikTok(channel, d.publish_id, account)) };
       }
 
       // Photos: single-step post (TikTok Content Posting API). photo_images
@@ -439,14 +453,14 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
         title: content.slice(0, 90),
         description: content,
         privacy_level: "PUBLIC_TO_EVERYONE",
-      });
+      }, account);
       if (!r) return { ...base, success: false, error: "No TikTok credentials. Connect TikTok in Clawnify." };
       const d = (r.data as any)?.data || (r.data as any) || {};
       const ref = d.publish_id as string | undefined;
       if (!r.successful) return { ...base, success: false, error: tiktokError(r.error, r.data), ref };
       // A photo post is asynchronous for the same reason a video is: TikTok
       // accepted the job, moderation still has to pass it.
-      return { ...base, ...(await settleTikTok(channel, ref)) };
+      return { ...base, ...(await settleTikTok(channel, ref, account)) };
     }
     case "facebook": {
       // Composio execute against the Graph API. Facebook only lets apps publish
@@ -539,7 +553,9 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
 // A failure here fails the whole channel rather than posting text-only. Sending
 // the user's post without the image they attached, silently, is the bug this
 // path exists to close (bluesky.ts takes the same stance on an oversized blob).
-async function uploadTwitterMedia(imageUrl: string): Promise<{ mediaId: string } | { error: string }> {
+// The media id belongs to the account that uploaded it, so the upload is made
+// as the same account the tweet is.
+async function uploadTwitterMedia(imageUrl: string, account?: string): Promise<{ mediaId: string } | { error: string }> {
   const staged = await stageFile("twitter", "TWITTER_UPLOAD_MEDIA", imageUrl);
   // No staging available at all: off-platform, or a runtime older than the
   // broker's stageFile. Don't borrow the "no credentials" wording — that names
@@ -550,7 +566,7 @@ async function uploadTwitterMedia(imageUrl: string): Promise<{ mediaId: string }
   const r = await executeTool("twitter", "TWITTER_UPLOAD_MEDIA", {
     media: staged.descriptor,
     media_category: "tweet_image",
-  });
+  }, account);
   if (!r) return { error: "No Twitter credentials. Connect Twitter in Clawnify." };
   const mediaId = (r.data as { data?: { id?: string } } | null)?.data?.id;
   if (!r.successful || !mediaId) return { error: `X image upload failed: ${r.error || "no media id returned"}` };
@@ -578,7 +594,7 @@ function tiktokError(error: string | null | undefined, data: unknown): string {
 //
 // Shared by the initial publish and by the re-check on a later delivery, so a
 // post can only ever be called live on TikTok's own word.
-async function settleTikTok(channel: any, publishId: string | undefined): Promise<Settled> {
+async function settleTikTok(channel: any, publishId: string | undefined, account?: string): Promise<Settled> {
   // TikTok accepted the post but gave us no id to poll. This must not become a
   // pending row: `pending` only means "don't re-send" while there is a ref to
   // re-check with, and a pending row without one falls through to a re-send on
@@ -587,7 +603,8 @@ async function settleTikTok(channel: any, publishId: string | undefined): Promis
   if (!publishId) {
     return { success: false, error: "TikTok accepted the post but returned no id, so we can't confirm it went out. Check TikTok before retrying." };
   }
-  const outcome = await awaitPublish(executeTool, publishId);
+  // Asked as the creator account that made the post: another account can't see it.
+  const outcome = await awaitPublish((s, t, a) => executeTool(s, t, a, account), publishId);
   if (outcome.state === "published") {
     return { success: true, ref: publishId, url: tiktokPostUrl(channel.profile_handle, outcome.postId) };
   }
@@ -663,7 +680,7 @@ type Settled = { success: boolean; pending?: boolean; error?: string; ref?: stri
 // Platforms that accept a post before it exists, and how to ask each one what
 // became of it. A platform here can leave a pending row with a ref; a platform
 // missing from here never does, and recheckChannel sends it normally.
-const CONFIRMERS: Record<string, (channel: any, ref: string) => Promise<Settled>> = {
+const CONFIRMERS: Record<string, (channel: any, ref: string, account?: string) => Promise<Settled>> = {
   tiktok: settleTikTok,
   facebook: settleFacebookVideo,
 };
@@ -676,6 +693,33 @@ function accountId(channel: any): string | undefined {
   if (stored) return stored;
   const legacy = String(channel.handle || "").trim();
   return /^\d+$/.test(legacy) ? legacy : undefined;
+}
+
+const MULTI_ACCOUNT = new Set<string>(MULTI_ACCOUNT_PLATFORMS);
+
+// The connected account a channel acts as. Empty means the org's default
+// connection, which is every channel that never picked one.
+//
+// A channel naming an account the org no longer has connected is refused: sent
+// through the default it would post as someone else. One exception: a
+// connection made before accounts were recorded can't say who it is, so an id
+// an Instagram channel stored back then can't be matched against it. It is the
+// org's only connection of that kind, so the channel keeps using it, and
+// resolveInstagramAccount still checks it is the right account.
+async function channelAccount(channel: any): Promise<{ account?: string } | { error: string }> {
+  const id = MULTI_ACCOUNT.has(channel.platform) ? (channel.platform_account_id as string | null) : null;
+  if (!id) return {};
+  const all = await listConnections();
+  // Off-platform, or a runtime that can't name accounts: the default, as before.
+  if (!all) return {};
+  const mine = all.filter((a) => a.service === channel.platform);
+  if (mine.some((a) => a.account === id)) return { account: id };
+  if (mine.length > 0 && mine.every((a) => a.account === null)) return {};
+  const label = PLATFORM_LABELS[channel.platform as keyof typeof PLATFORM_LABELS] ?? channel.platform;
+  const who = channel.profile_handle ? `@${channel.profile_handle}` : channel.profile_name || "The account this channel posts as";
+  return {
+    error: `${who} isn't connected to ${label} any more. Reconnect it in Clawnify, or pick another account for this channel.`,
+  };
 }
 
 // Instagram Business Account ID for a channel: the stored one, else ask the
@@ -708,11 +752,15 @@ type InstagramAccount = { id: string; username?: string; picture?: string; bio?:
 
 async function resolveInstagramAccount(
   channel: any,
+  // The connected account the channel names (channelAccount). With it, "me" is
+  // that account, so the checks below hold it to itself; without it, they hold
+  // the channel to the org's default connection, as they always did.
+  account?: string,
 ): Promise<InstagramAccount | { error: string; conflict?: true }> {
   const r = await executeTool("instagram", "INSTAGRAM_GET_USER_INFO", {
     ig_user_id: "me",
     fields: "id,username,profile_picture_url,biography",
-  });
+  }, account);
   const d = r?.successful ? ((r.data as any) || {}) : null;
   if (!d?.id) return { error: "No Instagram credentials. Connect Instagram in Clawnify." };
   const me: InstagramAccount = {
@@ -816,9 +864,15 @@ interface ChannelProfile {
 // has no profile fetch, isn't connected, or the call fails (off-platform too).
 async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { conflict: string } | null> {
   try {
+    // The profile of the account this channel posts as. One that is no longer
+    // connected can't be read, and showing the default's face instead would put
+    // someone else on the card.
+    const who = await channelAccount(channel);
+    if ("error" in who) return { conflict: who.error };
+    const account = who.account;
     switch (channel.platform) {
       case "linkedin": {
-        const r = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {});
+        const r = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {}, account);
         if (!r?.successful) return null;
         const d = (r.data as any) || {};
         const name = [d.localizedFirstName, d.localizedLastName].filter(Boolean).join(" ").trim();
@@ -832,7 +886,7 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { con
       case "twitter": {
         const r = await executeTool("twitter", "TWITTER_USER_LOOKUP_ME", {
           user__fields: "name,username,profile_image_url,description",
-        });
+        }, account);
         if (!r?.successful) return null;
         const d = (r.data as any)?.data || {};
         return {
@@ -847,7 +901,7 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { con
         // The profile is the resolved account's own — never whichever account
         // the connection happens to be, which is how two channels ended up
         // showing the same person.
-        const ig = await resolveInstagramAccount(channel);
+        const ig = await resolveInstagramAccount(channel, account);
         if ("error" in ig) return ig.conflict ? { conflict: ig.error } : null;
         return {
           profile_name: ig.username || null,
@@ -859,7 +913,7 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { con
       case "tiktok": {
         const r = await executeTool("tiktok", "TIKTOK_GET_USER_STATS", {
           fields: ["display_name", "avatar_url", "username", "bio_description"],
-        });
+        }, account);
         if (!r?.successful) return null;
         const d = (r.data as any)?.data?.user || (r.data as any)?.user || (r.data as any) || {};
         return {
@@ -1000,6 +1054,15 @@ app.get("/api/platforms/facebook/pages", async (c) => {
   return c.json({ connected: true, pages });
 });
 
+// The org's connected accounts on the platforms where a channel can name one:
+// the channel form's account picker, and the list of accounts that have no
+// channel yet. A connection that can't say which account it is is left out, as
+// it can only ever be the default. Empty off-platform.
+app.get("/api/accounts", async (c) => {
+  const all = (await listConnections()) ?? [];
+  return c.json({ accounts: all.filter((a) => MULTI_ACCOUNT.has(a.service) && a.account) });
+});
+
 // ── Channels ──
 
 app.get("/api/channels", async (c) => {
@@ -1060,6 +1123,12 @@ app.put("/api/channels/:id", async (c) => {
       id,
     ]
   );
+  // A channel moved to another account shows that account's profile, not the
+  // one it was synced as before.
+  if (MULTI_ACCOUNT.has(nextPlatform) && nextAccountId !== existing.platform_account_id) {
+    const synced = await syncChannelProfile(id);
+    if (synced) return c.json(synced.row);
+  }
   const row = await get("SELECT * FROM channels WHERE id = ?", [id]);
   return c.json(row);
 });

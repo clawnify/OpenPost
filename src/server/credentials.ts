@@ -18,6 +18,23 @@ export interface ExecResult {
   successful: boolean;
 }
 
+// Which connected account a call uses, by the provider's id for it (what
+// listConnections returns as `account`). Omitted: the org's default. A named
+// account that isn't connected fails; it never falls back to the default.
+export interface ConnectionOptions {
+  account?: string;
+}
+
+// One of the org's connected accounts. `account` is null for a connection made
+// before accounts were recorded: it can't say who it is, so it can only be used
+// as the default.
+export interface ConnectedAccount {
+  service: string;
+  account: string | null;
+  label: string | null;
+  isDefault: boolean;
+}
+
 export interface CredentialServiceBinding {
   getToken(service: string, orgId: string): Promise<string | null>;
   listConnected(orgId: string): Promise<string[]>;
@@ -26,7 +43,12 @@ export interface CredentialServiceBinding {
     toolSlug: string,
     args: Record<string, unknown>,
     orgId: string,
+    opts?: ConnectionOptions,
   ): Promise<ExecResult>;
+  // The org's connected accounts, several per service where the platform holds
+  // more than one. Optional so an older credentials worker degrades to "every
+  // channel uses the default", which is what it did before.
+  listConnections?(orgId: string): Promise<ConnectedAccount[]>;
   // Every field of an own-tier (api_key / basic_auth) credential — for a
   // provider a single bearer can't authenticate. Optional so an older
   // credentials worker (no getCredentials) degrades to null, not a crash.
@@ -68,13 +90,29 @@ export function initCredentials(opts: {
 // token for Composio connections. Posting must go through Composio's execute
 // path (Composio holds the real token server-side). Returns null off-platform
 // (no service binding) so callers degrade gracefully.
+//
+// `account` names which of the org's accounts to act as; omitted, the default.
 export async function executeTool(
   service: string,
   toolSlug: string,
   args: Record<string, unknown>,
+  account?: string,
 ): Promise<ExecResult | null> {
   if (_credentialService && _orgId) {
-    return _credentialService.executeTool(service, toolSlug, args, _orgId);
+    return account
+      ? _credentialService.executeTool(service, toolSlug, args, _orgId, { account })
+      : _credentialService.executeTool(service, toolSlug, args, _orgId);
+  }
+  return null;
+}
+
+// ── Connected accounts ──
+//
+// Null off-platform, or against a credentials worker too old to list them, so
+// callers can tell "can't name accounts here" apart from "none connected".
+export async function listConnections(): Promise<ConnectedAccount[] | null> {
+  if (_credentialService?.listConnections && _orgId) {
+    return _credentialService.listConnections(_orgId);
   }
   return null;
 }

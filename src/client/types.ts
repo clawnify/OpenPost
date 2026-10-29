@@ -8,6 +8,7 @@ export type DeliveryStatus = "pending" | "published" | "failed";
 // here so client code keeps importing platform facts from one place.
 export {
   PUBLISHABLE_PLATFORMS,
+  MULTI_ACCOUNT_PLATFORMS,
   PLATFORM_LIMITS,
   PLATFORM_MEDIA_LIMITS,
   PLATFORM_COLORS,
@@ -29,14 +30,24 @@ export interface FacebookPage {
   username: string | null;
 }
 
+// One of the org's connected accounts a channel can post as (GET /api/accounts).
+// `account` goes into the channel's platform_account_id.
+export interface ConnectedAccount {
+  service: Platform;
+  account: string;
+  label: string | null;
+  isDefault: boolean;
+}
+
 export interface Channel {
   id: number;
   name: string;
   platform: Platform;
   handle: string;
   color: string;
-  // Platform-side account the channel publishes as (Facebook Page ID,
-  // Instagram Business Account ID); null where the connection is the account.
+  // The account the channel publishes as: a Facebook Page ID, or, on the
+  // MULTI_ACCOUNT_PLATFORMS, which connected account. Null = the org's default
+  // connection.
   platform_account_id?: string | null;
   created_at: string;
   // Cached platform profile (synced from the connected account) for accurate
