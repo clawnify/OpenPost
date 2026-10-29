@@ -66,6 +66,11 @@ function broker(plan = {}) {
   // The one account the org's Instagram connection signs in as (Instagram
   // Login: one token, one account). null means Instagram isn't connected.
   const instagramMe = plan.instagramMe ?? (() => ({ id: "ig-100", username: "rubenlen10" }));
+  // The org's connected accounts, for a scenario about several of them:
+  // [{ service, account, label, isDefault }], read per call so a scenario can
+  // disconnect one. Absent, the binding has no listConnections at all: a
+  // credentials worker from before accounts could be named.
+  const connections = plan.connections ?? null;
   const fbVideos = [];
   return {
     sends,
@@ -73,6 +78,7 @@ function broker(plan = {}) {
     binding: {
       async getToken() { return null; },
       async listConnected() { return []; },
+      ...(connections ? { async listConnections() { return connections(); } } : {}),
       async getCredentials() { return null; },
       // The broker stages a file and hands back an opaque descriptor; the app's
       // only correct use is to forward it, so the stub returns a marked object
@@ -80,11 +86,22 @@ function broker(plan = {}) {
       async stageFile(service, toolSlug, file) {
         return { descriptor: { staged: file.url, tool: toolSlug }, error: null };
       },
-      async executeTool(service, toolSlug, args) {
+      async executeTool(service, toolSlug, args, _orgId, opts) {
+        // The account the call named; null is the org's default connection.
+        // Every send below records it as `as`.
+        const as = opts?.account ?? null;
+        // A named account must be one the org has connected. The real broker
+        // refuses anything else rather than falling back to the default.
+        const conn = as ? (connections?.() ?? []).find((c) => c.service === service && c.account === as) : null;
+        if (as && !conn) {
+          return { data: null, error: `No ${service} account ${as} is connected. Connect or reconnect it.`, successful: false };
+        }
         switch (toolSlug) {
           case "TWITTER_USER_LOOKUP_ME":
             return { data: { data: { name: "Test", username: "test" } }, error: null, successful: true };
           case "LINKEDIN_GET_MY_INFO":
+            // Signed in as the named account, the member is that account.
+            if (conn) return { data: { id: conn.account, localizedFirstName: conn.label }, error: null, successful: true };
             return linkedinOk()
               ? { data: { id: "li-me", localizedFirstName: "Test", localizedLastName: "User" }, error: null, successful: true }
               : { data: null, error: "LinkedIn token expired", successful: false };
@@ -94,13 +111,13 @@ function broker(plan = {}) {
             // shows up below as a send with no media ids.
             return { data: { data: { id: `media-${args.media?.staged ?? "?"}` } }, error: null, successful: true };
           case "TWITTER_CREATION_OF_A_POST":
-            sends.push({ service, toolSlug, text: args.text, images: args.media_media_ids });
+            sends.push({ service, toolSlug, as, text: args.text, images: args.media_media_ids });
             return { data: { data: { id: `tw-${sends.length}` } }, error: null, successful: true };
           case "LINKEDIN_CREATE_LINKED_IN_POST":
-            sends.push({ service, toolSlug, text: args.commentary, images: args.images });
+            sends.push({ service, toolSlug, as, text: args.commentary, images: args.images, author: args.author });
             return { data: { x_restli_id: `li-${sends.length}` }, error: null, successful: true };
           case "INSTAGRAM_GET_USER_INFO": {
-            const me = instagramMe();
+            const me = conn ? { id: conn.account, username: conn.label.replace(/^@/, "") } : instagramMe();
             return me
               ? { data: { ...me, profile_picture_url: `https://pics.example/${me.username}.jpg`, biography: `${me.username} bio` }, error: null, successful: true }
               : { data: null, error: "Instagram is not connected", successful: false };
@@ -110,17 +127,17 @@ function broker(plan = {}) {
             // Not a send: a container is a draft until it is published.
             return { data: { id: `container-${args.ig_user_id}` }, error: null, successful: true };
           case "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH":
-            sends.push({ service, toolSlug, account: args.ig_user_id });
+            sends.push({ service, toolSlug, as, account: args.ig_user_id });
             return { data: { id: `igpost-${sends.length}` }, error: null, successful: true };
           case "TIKTOK_UPLOAD_VIDEO":
-            sends.push({ service, toolSlug, text: args.caption, video: args.file_to_upload?.staged });
+            sends.push({ service, toolSlug, as, text: args.caption, video: args.file_to_upload?.staged });
             return {
               data: { publish_id: `tt-${sends.length}`, published: tiktokPublished(), upload_completed: true },
               error: null,
               successful: true,
             };
           case "TIKTOK_POST_PHOTO":
-            sends.push({ service, toolSlug, text: args.description, images: args.photo_images });
+            sends.push({ service, toolSlug, as, text: args.description, images: args.photo_images });
             return { data: { publish_id: `tt-${sends.length}` }, error: null, successful: true };
           case "TIKTOK_FETCH_PUBLISH_STATUS": {
             // Not a send: asking TikTok what happened posts nothing. Composio
@@ -130,7 +147,7 @@ function broker(plan = {}) {
             return { data: { data: body, error: { code: "ok", message: "", log_id: "l1" } }, error: null, successful: true };
           }
           case "FACEBOOK_CREATE_VIDEO_POST": {
-            sends.push({ service, toolSlug, text: args.description, video: args.file_url });
+            sends.push({ service, toolSlug, as, text: args.description, video: args.file_url });
             const id = `fbv-${sends.length}`;
             fbVideos.push(id);
             return { data: { id }, error: null, successful: true };
@@ -145,10 +162,10 @@ function broker(plan = {}) {
             return { data: { data }, error: null, successful: true };
           }
           case "FACEBOOK_CREATE_POST":
-            sends.push({ service, toolSlug, text: args.message });
+            sends.push({ service, toolSlug, as, text: args.message });
             return { data: { id: `fb-${sends.length}` }, error: null, successful: true };
           case "FACEBOOK_CREATE_PHOTO_POST":
-            sends.push({ service, toolSlug, text: args.message, images: [args.url] });
+            sends.push({ service, toolSlug, as, text: args.message, images: [args.url] });
             return { data: { post_id: `fb-${sends.length}` }, error: null, successful: true };
           default:
             return { data: null, error: `harness has no stub for ${toolSlug}`, successful: false };

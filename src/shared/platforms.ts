@@ -32,6 +32,12 @@ export const PUBLISHABLE_PLATFORMS: Platform[] = [
   "bluesky",
 ];
 
+// Platforms whose connection can be one of several accounts in an org. A
+// channel on one of them names its account in platform_account_id. Facebook's
+// id there is a Page, not a connected account, and Bluesky holds one account
+// per org, so both always use the org's connection as it is.
+export const MULTI_ACCOUNT_PLATFORMS: Platform[] = ["twitter", "linkedin", "instagram", "tiktok"];
+
 export const PLATFORM_LIMITS: Record<Platform, number> = {
   twitter: 280,
   linkedin: 3000,

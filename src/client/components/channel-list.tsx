@@ -2,9 +2,9 @@ import { useState, useEffect } from "preact/hooks";
 import { Plus, Trash2, Edit2, Check, X, RefreshCw } from "lucide-preact";
 import { useApp } from "../context";
 import { api } from "../api";
-import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS } from "../types";
+import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS, MULTI_ACCOUNT_PLATFORMS } from "../types";
 import { PlatformIcon } from "./platform-icon";
-import type { Platform, FacebookPage } from "../types";
+import type { Platform, FacebookPage, ConnectedAccount, Channel } from "../types";
 
 // Only offer platforms the server can publish to (see PUBLISHABLE_PLATFORMS) —
 // a channel the composer can't actually deliver to is a trap, not a feature.
@@ -17,6 +17,16 @@ function initials(name: string): string {
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }
 
+const accountName = (a: ConnectedAccount) => a.label || a.account;
+
+// Does some channel already post as this account? A channel that never picked
+// one posts as its platform's default account.
+function inUse(a: ConnectedAccount, channels: Channel[]): boolean {
+  return channels.some(
+    (ch) => ch.platform === a.service && (ch.platform_account_id ? ch.platform_account_id === a.account : a.isDefault),
+  );
+}
+
 export function ChannelList() {
   const { channels, createChannel, updateChannel, deleteChannel, syncChannelProfile } = useApp();
   const [syncingId, setSyncingId] = useState<number | null>(null);
@@ -26,13 +36,58 @@ export function ChannelList() {
   const [platform, setPlatform] = useState<Platform>("twitter");
   const [handle, setHandle] = useState("");
   const [color, setColor] = useState("#1da1f2");
-  // Platform-side account the channel publishes as (Facebook Page ID). Instagram
-  // resolves its own from the connection, so only Facebook edits this here.
+  // The account the channel publishes as: a Facebook Page ID, or which of the
+  // org's connected accounts on a multi-account platform.
   const [accountId, setAccountId] = useState("");
+  // What the channel being edited had, so an edit that leaves the account alone
+  // doesn't send it (and can't wipe one the form couldn't show).
+  const [originalAccountId, setOriginalAccountId] = useState("");
   // Facebook publishes as a Page: offer the connected account's Pages as a
   // picker; null = not loaded yet.
   const [fbPages, setFbPages] = useState<FacebookPage[] | null>(null);
   const [fbConnected, setFbConnected] = useState(true);
+  // The org's connected accounts a channel can post as.
+  const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
+  const [addingKey, setAddingKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    api<{ accounts: ConnectedAccount[] }>("GET", "/api/accounts")
+      .then((r) => setAccounts(r.accounts))
+      .catch(() => setAccounts([]));
+  }, []);
+
+  const accountsFor = (p: Platform) =>
+    MULTI_ACCOUNT_PLATFORMS.includes(p) ? accounts.filter((a) => a.service === p) : [];
+  const defaultAccountFor = (p: Platform) => {
+    const list = accountsFor(p);
+    return (list.find((a) => a.isDefault) ?? list[0])?.account ?? "";
+  };
+  const platformAccounts = accountsFor(platform);
+  // Connected, but no channel posts as them yet.
+  const unused = accounts.filter((a) => !inUse(a, channels));
+
+  const pickAccount = (id: string) => {
+    const next = platformAccounts.find((a) => a.account === id);
+    const prev = platformAccounts.find((a) => a.account === accountId);
+    setAccountId(id);
+    // Prefill the name, and the handle the Instagram check reads, from the
+    // account unless the user typed their own.
+    if (next && (!name.trim() || (prev && name === accountName(prev)))) setName(accountName(next));
+    if (platform === "instagram") setHandle(next?.label ?? "");
+  };
+
+  const addFromAccount = async (a: ConnectedAccount) => {
+    const key = `${a.service}:${a.account}`;
+    setAddingKey(key);
+    await createChannel({
+      name: accountName(a),
+      platform: a.service,
+      handle: a.service === "instagram" ? (a.label ?? "") : "",
+      color: PLATFORM_COLORS[a.service],
+      platform_account_id: a.account,
+    });
+    setAddingKey(null);
+  };
 
   useEffect(() => {
     if (platform !== "facebook" || !showForm) return;
@@ -55,7 +110,8 @@ export function ChannelList() {
   const needsPage = platform === "facebook" && !accountId.trim();
 
   const resetForm = () => {
-    setName(""); setPlatform("twitter"); setHandle(""); setAccountId("");
+    setName(""); setPlatform("twitter"); setHandle(""); setAccountId(defaultAccountFor("twitter"));
+    setOriginalAccountId("");
     setColor("#1da1f2");
     setShowForm(false); setEditingId(null);
   };
@@ -63,17 +119,23 @@ export function ChannelList() {
   const startEdit = (ch: any) => {
     setEditingId(ch.id); setName(ch.name); setPlatform(ch.platform);
     setHandle(ch.handle); setColor(ch.color); setAccountId(ch.platform_account_id || "");
+    setOriginalAccountId(ch.platform_account_id || "");
     setShowForm(true);
   };
+
+  // The account is sent for a Facebook Page, and on a multi-account platform
+  // only when the form offered a choice and it changed. Otherwise an account
+  // id resolved from the connection (Instagram's) must survive an edit:
+  // sending null for it wiped the account a channel was tied to.
+  const sendAccount =
+    platform === "facebook" ||
+    (platformAccounts.length > 0 && (editingId === null || accountId !== originalAccountId));
 
   const handleSave = async () => {
     if (!name.trim()) return;
     const data = {
       name: name.trim(), platform, handle: handle.trim(), color,
-      // Only Facebook's Page is picked here. Every other platform's account id
-      // is resolved from its connection and must survive an edit — sending null
-      // for them wiped the Instagram account a channel was tied to.
-      ...(platform === "facebook" ? { platform_account_id: accountId.trim() || null } : {}),
+      ...(sendAccount ? { platform_account_id: accountId.trim() || null } : {}),
     };
     if (editingId) {
       await updateChannel(editingId, data);
@@ -94,6 +156,29 @@ export function ChannelList() {
           <Plus size={14} /> Add Channel
         </button>
       </div>
+
+      {/* Connected accounts no channel posts as yet: one click makes one. */}
+      {unused.length > 0 && !showForm && (
+        <div class="card p-5 mb-6">
+          <h3 class="text-base font-semibold">Connected accounts</h3>
+          <p class="text-sm text-muted-foreground mt-0.5 mb-2">Connected in Clawnify, not a channel yet.</p>
+          {unused.map((a) => {
+            const key = `${a.service}:${a.account}`;
+            return (
+              <div key={key} class="flex items-center justify-between gap-3 py-2.5 border-t border-border first:border-t-0">
+                <span class="inline-flex items-center gap-2 min-w-0 text-sm">
+                  <PlatformIcon platform={a.service} />
+                  <span class="truncate">{accountName(a)}</span>
+                  <span class="text-xs text-muted-foreground shrink-0">{PLATFORM_LABELS[a.service]}</span>
+                </span>
+                <button class="btn-secondary disabled:opacity-50" disabled={addingKey !== null} onClick={() => addFromAccount(a)}>
+                  <Plus size={14} /> {addingKey === key ? "Adding…" : "Add"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Form */}
       {showForm && (
@@ -118,6 +203,8 @@ export function ChannelList() {
                   const p = (e.target as HTMLSelectElement).value as Platform;
                   setPlatform(p);
                   setColor(PLATFORM_COLORS[p]);
+                  // An account belongs to one platform.
+                  setAccountId(p === "facebook" ? "" : defaultAccountFor(p));
                 }}
               >
                 {PLATFORMS.map((p) => (
@@ -158,6 +245,29 @@ export function ChannelList() {
                     </p>
                   </>
                 )}
+              </div>
+            ) : platformAccounts.length > 0 ? (
+              <div>
+                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Posts as</label>
+                <select
+                  class="input"
+                  value={accountId}
+                  onChange={(e) => pickAccount((e.target as HTMLSelectElement).value)}
+                >
+                  {/* Only an existing channel that never picked one has no account. */}
+                  {!accountId && <option value="">The default account</option>}
+                  {accountId && !platformAccounts.some((a) => a.account === accountId) && (
+                    <option value={accountId}>An account that isn't connected any more</option>
+                  )}
+                  {platformAccounts.map((a) => (
+                    <option key={a.account} value={a.account}>
+                      {accountName(a)}{a.isDefault ? " (default)" : ""}
+                    </option>
+                  ))}
+                </select>
+                <p class="text-xs text-muted-foreground mt-1.5">
+                  The {PLATFORM_LABELS[platform]} accounts connected in Clawnify.
+                </p>
               </div>
             ) : (
               <div>
