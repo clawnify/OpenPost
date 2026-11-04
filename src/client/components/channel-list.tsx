@@ -4,7 +4,7 @@ import { useApp } from "../context";
 import { api } from "../api";
 import { PLATFORM_LABELS, PLATFORM_COLORS, PUBLISHABLE_PLATFORMS, MULTI_ACCOUNT_PLATFORMS } from "../types";
 import { PlatformIcon } from "./platform-icon";
-import type { Platform, FacebookPage, ConnectedAccount, Channel } from "../types";
+import type { Platform, FacebookPage, LinkedInPage, ConnectedAccount, Channel } from "../types";
 
 // Only offer platforms the server can publish to (see PUBLISHABLE_PLATFORMS) —
 // a channel the composer can't actually deliver to is a trap, not a feature.
@@ -23,7 +23,8 @@ const accountName = (a: ConnectedAccount) => a.label || a.account;
 // one posts as its platform's default account.
 function inUse(a: ConnectedAccount, channels: Channel[]): boolean {
   return channels.some(
-    (ch) => ch.platform === a.service && (ch.platform_account_id ? ch.platform_account_id === a.account : a.isDefault),
+    (ch) => ch.platform === a.service && !ch.linkedin_organization_id &&
+      (ch.platform_account_id ? ch.platform_account_id === a.account : a.isDefault),
   );
 }
 
@@ -46,6 +47,11 @@ export function ChannelList() {
   // picker; null = not loaded yet.
   const [fbPages, setFbPages] = useState<FacebookPage[] | null>(null);
   const [fbConnected, setFbConnected] = useState(true);
+  const [linkedinAsCompany, setLinkedinAsCompany] = useState(false);
+  const [linkedinOrganizationId, setLinkedinOrganizationId] = useState("");
+  const [linkedinPages, setLinkedinPages] = useState<LinkedInPage[] | null>(null);
+  const [linkedinPageError, setLinkedinPageError] = useState("");
+  const [pageReload, setPageReload] = useState(0);
   // The org's connected accounts a channel can post as.
   const [accounts, setAccounts] = useState<ConnectedAccount[]>([]);
   const [addingKey, setAddingKey] = useState<string | null>(null);
@@ -70,6 +76,7 @@ export function ChannelList() {
     const next = platformAccounts.find((a) => a.account === id);
     const prev = platformAccounts.find((a) => a.account === accountId);
     setAccountId(id);
+    if (platform === "linkedin") setLinkedinOrganizationId("");
     // Prefill the name, and the handle the Instagram check reads, from the
     // account unless the user typed their own.
     if (next && (!name.trim() || (prev && name === accountName(prev)))) setName(accountName(next));
@@ -99,6 +106,18 @@ export function ChannelList() {
     return () => { cancelled = true; };
   }, [platform, showForm]);
 
+  useEffect(() => {
+    if (platform !== "linkedin" || !linkedinAsCompany || !showForm) return;
+    let cancelled = false;
+    setLinkedinPages(null);
+    setLinkedinPageError("");
+    const query = accountId ? `?account=${encodeURIComponent(accountId)}` : "";
+    api<{ pages: LinkedInPage[] }>("GET", `/api/platforms/linkedin/pages${query}`)
+      .then((r) => { if (!cancelled) setLinkedinPages(r.pages); })
+      .catch((e: Error) => { if (!cancelled) { setLinkedinPages([]); setLinkedinPageError(e.message); } });
+    return () => { cancelled = true; };
+  }, [platform, linkedinAsCompany, accountId, showForm, pageReload]);
+
   const pickFacebookPage = (id: string) => {
     const page = fbPages?.find((p) => p.id === id);
     setAccountId(id);
@@ -108,10 +127,13 @@ export function ChannelList() {
   };
 
   const needsPage = platform === "facebook" && !accountId.trim();
+  const needsLinkedinPage = platform === "linkedin" && linkedinAsCompany &&
+    !linkedinPages?.some((p) => p.id === linkedinOrganizationId);
 
   const resetForm = () => {
     setName(""); setPlatform("twitter"); setHandle(""); setAccountId(defaultAccountFor("twitter"));
     setOriginalAccountId("");
+    setLinkedinAsCompany(false); setLinkedinOrganizationId(""); setLinkedinPages(null); setLinkedinPageError("");
     setColor("#1da1f2");
     setShowForm(false); setEditingId(null);
   };
@@ -120,6 +142,8 @@ export function ChannelList() {
     setEditingId(ch.id); setName(ch.name); setPlatform(ch.platform);
     setHandle(ch.handle); setColor(ch.color); setAccountId(ch.platform_account_id || "");
     setOriginalAccountId(ch.platform_account_id || "");
+    setLinkedinAsCompany(!!ch.linkedin_organization_id);
+    setLinkedinOrganizationId(ch.linkedin_organization_id || "");
     setShowForm(true);
   };
 
@@ -132,10 +156,11 @@ export function ChannelList() {
     (platformAccounts.length > 0 && (editingId === null || accountId !== originalAccountId));
 
   const handleSave = async () => {
-    if (!name.trim()) return;
+    if (!name.trim() || needsPage || needsLinkedinPage) return;
     const data = {
       name: name.trim(), platform, handle: handle.trim(), color,
       ...(sendAccount ? { platform_account_id: accountId.trim() || null } : {}),
+      ...(platform === "linkedin" ? { linkedin_organization_id: linkedinAsCompany ? linkedinOrganizationId : null } : {}),
     };
     if (editingId) {
       await updateChannel(editingId, data);
@@ -184,7 +209,7 @@ export function ChannelList() {
       {showForm && (
         <div class="card p-5 mb-6">
           <h3 class="text-base font-semibold mb-4">{editingId ? "Edit Channel" : "New Channel"}</h3>
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Name</label>
               <input
@@ -205,6 +230,7 @@ export function ChannelList() {
                   setColor(PLATFORM_COLORS[p]);
                   // An account belongs to one platform.
                   setAccountId(p === "facebook" ? "" : defaultAccountFor(p));
+                  setLinkedinAsCompany(false); setLinkedinOrganizationId("");
                 }}
               >
                 {PLATFORMS.map((p) => (
@@ -248,7 +274,7 @@ export function ChannelList() {
               </div>
             ) : platformAccounts.length > 0 ? (
               <div>
-                <label class="block text-xs font-medium text-muted-foreground mb-1.5">Posts as</label>
+                <label class="block text-xs font-medium text-muted-foreground mb-1.5">{platform === "linkedin" ? "Connected account" : "Posts as"}</label>
                 <select
                   class="input"
                   value={accountId}
@@ -285,6 +311,46 @@ export function ChannelList() {
                 )}
               </div>
             )}
+            {platform === "linkedin" && (
+              <>
+                <div>
+                  <label class="block text-xs font-medium text-muted-foreground mb-1.5" for="linkedin-destination">Publish to</label>
+                  <select id="linkedin-destination" class="input" value={linkedinAsCompany ? "company" : "personal"}
+                    onChange={(e) => { setLinkedinAsCompany((e.target as HTMLSelectElement).value === "company"); setLinkedinOrganizationId(""); }}>
+                    <option value="personal">Personal profile</option>
+                    <option value="company">Company Page</option>
+                  </select>
+                </div>
+                {linkedinAsCompany && (
+                  <div class="sm:col-span-2">
+                    <label class="block text-xs font-medium text-muted-foreground mb-1.5" for="linkedin-page">Company Page</label>
+                    <select id="linkedin-page" class="input" value={linkedinOrganizationId} disabled={linkedinPages === null || !!linkedinPageError}
+                      onChange={(e) => {
+                        const id = (e.target as HTMLSelectElement).value;
+                        const prev = linkedinPages?.find((p) => p.id === linkedinOrganizationId);
+                        const next = linkedinPages?.find((p) => p.id === id);
+                        setLinkedinOrganizationId(id);
+                        if (next && (!name.trim() || name === prev?.name)) setName(next.name);
+                      }}>
+                      <option value="">{linkedinPages === null ? "Loading Pages…" : "Choose a company Page…"}</option>
+                      {linkedinOrganizationId && !linkedinPages?.some((p) => p.id === linkedinOrganizationId) && (
+                        <option value={linkedinOrganizationId}>Page {linkedinOrganizationId} (unavailable)</option>
+                      )}
+                      {linkedinPages?.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                    {linkedinPageError ? (
+                      <p role="alert" class="text-xs text-destructive mt-1.5">{linkedinPageError}</p>
+                    ) : linkedinPages?.length === 0 ? (
+                      <p class="text-xs text-muted-foreground mt-1.5">No Pages found. This LinkedIn account needs an approved admin or content admin role on the company Page.</p>
+                    ) : (
+                      <p class="text-xs text-muted-foreground mt-1.5">Publish as the selected company using the connected account above.</p>
+                    )}
+                    <button class="text-xs text-muted-foreground hover:text-foreground mt-1.5 disabled:opacity-50" disabled={linkedinPages === null}
+                      onClick={() => setPageReload((n) => n + 1)}>Reload Pages</button>
+                  </div>
+                )}
+              </>
+            )}
             <div>
               <label class="block text-xs font-medium text-muted-foreground mb-1.5">Color</label>
               <div class="flex items-center gap-2">
@@ -308,7 +374,7 @@ export function ChannelList() {
             <button
               class="btn-primary disabled:opacity-50"
               onClick={handleSave}
-              disabled={!name.trim() || needsPage}
+              disabled={!name.trim() || needsPage || needsLinkedinPage}
             >
               <Check size={14} /> {editingId ? "Update" : "Create"}
             </button>
@@ -340,7 +406,7 @@ export function ChannelList() {
                   )}
                   <div class="min-w-0">
                     <span class="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <PlatformIcon platform={ch.platform} /> {PLATFORM_LABELS[ch.platform] || ch.platform}
+                      <PlatformIcon platform={ch.platform} /> {PLATFORM_LABELS[ch.platform] || ch.platform}{ch.linkedin_organization_id ? " · Company Page" : ""}
                     </span>
                     <h3 class="font-semibold mt-0.5 truncate">{ch.profile_name || ch.name}</h3>
                     {(ch.profile_handle || ch.handle) && (

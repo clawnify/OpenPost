@@ -25,6 +25,12 @@ export interface ConnectionOptions {
   account?: string;
 }
 
+export interface ProxyRequest {
+  method: string;
+  endpoint: string;
+  parameters?: Array<{ name: string; value: string; in: "query" | "header" }>;
+}
+
 // One of the org's connected accounts. `account` is null for a connection made
 // before accounts were recorded: it can't say who it is, so it can only be used
 // as the default.
@@ -49,6 +55,7 @@ export interface CredentialServiceBinding {
   // more than one. Optional so an older credentials worker degrades to "every
   // channel uses the default", which is what it did before.
   listConnections?(orgId: string): Promise<ConnectedAccount[]>;
+  proxyRequest?(service: string, orgId: string, request: ProxyRequest, opts?: ConnectionOptions): Promise<ExecResult>;
   // Every field of an own-tier (api_key / basic_auth) credential — for a
   // provider a single bearer can't authenticate. Optional so an older
   // credentials worker (no getCredentials) degrades to null, not a crash.
@@ -115,6 +122,11 @@ export async function listConnections(): Promise<ConnectedAccount[] | null> {
     return _credentialService.listConnections(_orgId);
   }
   return null;
+}
+
+export async function proxyRequest(service: string, request: ProxyRequest, account?: string): Promise<ExecResult | null> {
+  if (!_credentialService?.proxyRequest || !_orgId) return null;
+  return _credentialService.proxyRequest(service, _orgId, request, account ? { account } : undefined);
 }
 
 // ── Own-tier multi-field credentials ──

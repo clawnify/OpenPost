@@ -9,6 +9,7 @@ import { mediaError, MAX_VIDEO_BYTES, PLATFORM_LABELS, MULTI_ACCOUNT_PLATFORMS }
 import { splitMedia, toMediaItem, mediaTypeFromMime, type MediaItem } from "../shared/media";
 import { awaitPublish, tiktokPostUrl } from "./tiktok";
 import { pollOutcome, type PublishOutcome } from "./confirm";
+import { listLinkedInPages, linkedInPage } from "./linkedin";
 
 type Env = {
   Bindings: {
@@ -340,10 +341,18 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
     case "linkedin": {
       // Composio permanently redacts raw tokens (May 2026 incident), so post
       // via Composio execute — it holds the real token server-side.
-      const me = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {}, account);
-      if (!me?.successful) return { ...base, success: false, error: me?.error || "LinkedIn not connected" };
-      const id = (me.data as { id?: string } | null)?.id;
-      if (!id) return { ...base, success: false, error: "could not resolve LinkedIn member id" };
+      let author: string;
+      if (channel.linkedin_organization_id) {
+        const page = await linkedInPage(channel.linkedin_organization_id, account);
+        if ("error" in page) return { ...base, success: false, error: page.error };
+        author = `urn:li:organization:${page.id}`;
+      } else {
+        const me = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {}, account);
+        if (!me?.successful) return { ...base, success: false, error: me?.error || "LinkedIn not connected" };
+        const id = (me.data as { id?: string } | null)?.id;
+        if (!id) return { ...base, success: false, error: "could not resolve LinkedIn member id" };
+        author = `urn:li:person:${id}`;
+      }
       // LinkedIn's action uploads the images itself, but only from files
       // staged through the broker — a URL in `images` is not a shape it takes.
       // The action carries 1-20 of them; slide order follows this array.
@@ -362,7 +371,7 @@ async function publishToChannel(channel: any, content: string, media: MediaItem[
         images = staged;
       }
       const r = await executeTool("linkedin", "LINKEDIN_CREATE_LINKED_IN_POST", {
-        author: `urn:li:person:${id}`,
+        author,
         commentary: content,
         visibility: "PUBLIC",
         lifecycleState: "PUBLISHED",
@@ -872,6 +881,16 @@ async function fetchChannelProfile(channel: any): Promise<ChannelProfile | { con
     const account = who.account;
     switch (channel.platform) {
       case "linkedin": {
+        if (channel.linkedin_organization_id) {
+          const page = await linkedInPage(channel.linkedin_organization_id, account);
+          if ("error" in page) return { conflict: page.error };
+          return {
+            profile_name: page.name,
+            profile_handle: page.username,
+            profile_avatar_url: null,
+            profile_headline: "Company Page",
+          };
+        }
         const r = await executeTool("linkedin", "LINKEDIN_GET_MY_INFO", {}, account);
         if (!r?.successful) return null;
         const d = (r.data as any) || {};
@@ -1054,6 +1073,16 @@ app.get("/api/platforms/facebook/pages", async (c) => {
   return c.json({ connected: true, pages });
 });
 
+app.get("/api/platforms/linkedin/pages", async (c) => {
+  const who = await channelAccount({ platform: "linkedin", platform_account_id: c.req.query("account") });
+  if ("error" in who) return c.json({ error: who.error }, 409);
+  try {
+    return c.json({ pages: await listLinkedInPages(who.account) });
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : "Couldn't read LinkedIn Pages. Try again." }, 502);
+  }
+});
+
 // The org's connected accounts on the platforms where a channel can name one:
 // the channel form's account picker, and the list of accounts that have no
 // channel yet. A connection that can't say which account it is is left out, as
@@ -1071,13 +1100,17 @@ app.get("/api/channels", async (c) => {
 });
 
 app.post("/api/channels", async (c) => {
-  const { name, platform, handle, color, platform_account_id } = await c.req.json<{
-    name: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null;
+  const { name, platform, handle, color, platform_account_id, linkedin_organization_id } = await c.req.json<{
+    name: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null; linkedin_organization_id?: string | null;
   }>();
   if (!name?.trim()) return c.json({ error: "Name required" }, 400);
+  if (linkedin_organization_id != null &&
+      (platform !== "linkedin" || typeof linkedin_organization_id !== "string" || !/^\d+$/.test(linkedin_organization_id))) {
+    return c.json({ error: "A LinkedIn company Page requires a numeric organization ID and the LinkedIn platform." }, 400);
+  }
   const result = await run(
-    "INSERT INTO channels (name, platform, handle, color, platform_account_id) VALUES (?, ?, ?, ?, ?)",
-    [name.trim(), platform || "twitter", handle || "", color || "#1da1f2", platform_account_id?.trim() || null]
+    "INSERT INTO channels (name, platform, handle, color, platform_account_id, linkedin_organization_id) VALUES (?, ?, ?, ?, ?, ?)",
+    [name.trim(), platform || "twitter", handle || "", color || "#1da1f2", platform_account_id?.trim() || null, linkedin_organization_id ?? null]
   );
   const id = Number(result.lastInsertRowid);
   // Pull the real platform profile so previews are accurate from the start.
@@ -1100,12 +1133,19 @@ app.post("/api/channels/:id/sync-profile", async (c) => {
 
 app.put("/api/channels/:id", async (c) => {
   const id = Number(c.req.param("id"));
-  const { name, platform, handle, color, platform_account_id } = await c.req.json<{
-    name?: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null;
+  const { name, platform, handle, color, platform_account_id, linkedin_organization_id } = await c.req.json<{
+    name?: string; platform?: string; handle?: string; color?: string; platform_account_id?: string | null; linkedin_organization_id?: string | null;
   }>();
   const existing = await get<any>("SELECT * FROM channels WHERE id = ?", [id]);
   if (!existing) return c.json({ error: "Not found" }, 404);
   const nextPlatform = platform ?? existing.platform;
+  if (linkedin_organization_id != null &&
+      (nextPlatform !== "linkedin" || typeof linkedin_organization_id !== "string" || !/^\d+$/.test(linkedin_organization_id))) {
+    return c.json({ error: "A LinkedIn company Page requires a numeric organization ID and the LinkedIn platform." }, 400);
+  }
+  const nextOrganizationId = nextPlatform === "linkedin"
+    ? linkedin_organization_id === undefined ? existing.linkedin_organization_id : linkedin_organization_id
+    : null;
   // An account id belongs to one platform: drop it when the platform changes
   // unless the request supplies a new one.
   const nextAccountId =
@@ -1113,19 +1153,24 @@ app.put("/api/channels/:id", async (c) => {
       ? platform_account_id?.trim() || null
       : nextPlatform === existing.platform ? existing.platform_account_id : null;
   await run(
-    "UPDATE channels SET name = ?, platform = ?, handle = ?, color = ?, platform_account_id = ? WHERE id = ?",
+    "UPDATE channels SET name = ?, platform = ?, handle = ?, color = ?, platform_account_id = ?, linkedin_organization_id = ? WHERE id = ?",
     [
       name ?? existing.name,
       nextPlatform,
       handle ?? existing.handle,
       color ?? existing.color,
       nextAccountId,
+      nextOrganizationId,
       id,
     ]
   );
   // A channel moved to another account shows that account's profile, not the
   // one it was synced as before.
-  if (MULTI_ACCOUNT.has(nextPlatform) && nextAccountId !== existing.platform_account_id) {
+  if (nextPlatform !== existing.platform || nextOrganizationId !== existing.linkedin_organization_id ||
+      (MULTI_ACCOUNT.has(nextPlatform) && nextAccountId !== existing.platform_account_id)) {
+    // A company destination must never retain a personal profile's face (or
+    // another Page's name), even if the new profile cannot be fetched.
+    await run("UPDATE channels SET profile_name = NULL, profile_handle = NULL, profile_avatar_url = NULL, profile_headline = NULL WHERE id = ?", [id]);
     const synced = await syncChannelProfile(id);
     if (synced) return c.json(synced.row);
   }

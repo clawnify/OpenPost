@@ -30,6 +30,7 @@ export function PostPreview({ channel, content, media, timeLabel }: Props) {
     case "linkedin":
       return (
         <LinkedInPreview
+          isCompany={!!channel.linkedin_organization_id}
           authorName={channel.profile_name || channel.name}
           authorHeadline={channel.profile_headline || channel.handle || undefined}
           avatarUrl={channel.profile_avatar_url || undefined}

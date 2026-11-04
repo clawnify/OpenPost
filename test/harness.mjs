@@ -76,6 +76,7 @@ function broker(plan = {}) {
     sends,
     polls,
     binding: {
+      ...(plan.proxyRequest ? { proxyRequest: plan.proxyRequest } : {}),
       async getToken() { return null; },
       async listConnected() { return []; },
       ...(connections ? { async listConnections() { return connections(); } } : {}),
