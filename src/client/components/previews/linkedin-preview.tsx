@@ -10,6 +10,7 @@ interface Props {
   content: string;
   media?: MediaItem;
   timeLabel?: string;
+  isCompany?: boolean;
 }
 
 function initials(name: string): string {
@@ -29,7 +30,7 @@ const ACTIONS = [
   { Icon: Send, label: "Send" },
 ];
 
-export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content, media, timeLabel }: Props) {
+export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content, media, timeLabel, isCompany }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const isLong = content.length > COLLAPSE_AT || content.split("\n").length > 4;
@@ -49,7 +50,7 @@ export function LinkedInPreview({ authorName, authorHeadline, avatarUrl, content
         <div class="min-w-0 flex-1 leading-tight">
           <div class="flex items-center gap-1 text-sm font-semibold truncate">
             {authorName || "Your name"}
-            <span class="text-[#00000099] font-normal">· 1st</span>
+            {!isCompany && <span class="text-[#00000099] font-normal">· 1st</span>}
           </div>
           {authorHeadline && (
             <div class="text-xs text-[#00000099] truncate">{authorHeadline}</div>

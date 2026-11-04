@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS channels (
   -- many Pages) or the Instagram Business Account ID (resolved from the
   -- connected account). NULL for platforms that publish as the connection.
   platform_account_id TEXT,
+  -- LinkedIn Company Page destination. Separate from platform_account_id,
+  -- which selects the member connection authorizing the post. NULL posts as
+  -- that member, preserving every existing personal channel.
+  linkedin_organization_id TEXT,
   -- Cached platform profile, synced from the connected account via Composio,
   -- so previews render the real name / photo / @handle / headline.
   profile_name TEXT,

@@ -30,6 +30,12 @@ export interface FacebookPage {
   username: string | null;
 }
 
+export interface LinkedInPage {
+  id: string;
+  name: string;
+  username: string | null;
+}
+
 // One of the org's connected accounts a channel can post as (GET /api/accounts).
 // `account` goes into the channel's platform_account_id.
 export interface ConnectedAccount {
@@ -49,6 +55,9 @@ export interface Channel {
   // MULTI_ACCOUNT_PLATFORMS, which connected account. Null = the org's default
   // connection.
   platform_account_id?: string | null;
+  // Company destination; platform_account_id still selects the authorizing
+  // LinkedIn member's connection. Null = post as that member's own profile.
+  linkedin_organization_id?: string | null;
   created_at: string;
   // Cached platform profile (synced from the connected account) for accurate
   // previews — real name, photo, @handle, headline.

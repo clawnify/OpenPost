@@ -43,7 +43,7 @@ Conceptual UI illustrations of the app's main capabilities, with fictional examp
 | Platform | Character limit | Images | Video | Publishing |
 |----------|----------------|--------|-------|------------|
 | X / Twitter | 280 | up to 4 | no | text, or a post with up to four images |
-| LinkedIn | 3,000 | up to 20 | no | text, or a post with up to twenty images |
+| LinkedIn | 3,000 | up to 20 | no | personal profiles and company Pages; text, or a post with up to twenty images |
 | Instagram | 2,200 | 1-10 | no | photo + caption; two or more images publish as a carousel (Business or Creator account, picked up from the connection) |
 | Facebook | 63,206 | no stated cap | yes | text, one photo, one feed post with several photos, or a video, as a Page you manage |
 | TikTok | 2,200 | 1-35 | yes | photo post (the first image is the cover), or a video post |
@@ -86,6 +86,8 @@ actually makes to each platform.
 ### Publishing
 
 Publishing runs through the accounts connected in Clawnify, with no API keys in the app. On Clawnify, scheduled posts go out on their own at the scheduled time. Locally there is no connection or scheduler, so posts save and schedule, a scheduled post waits for you to publish it, and publishing reports each channel as not connected.
+
+For LinkedIn, add a channel, choose the connected member account, then select **Personal profile** or **Company Page** under **Publish to**. Company channels list the Pages where that member has an approved administrator or content administrator role. Personal and company channels can share a connection and publish independently. If Pages cannot be loaded, reconnect LinkedIn in Clawnify to grant company Page permissions. A company channel never falls back to posting on the member's profile.
 
 Each channel on a post is delivered and tracked on its own: one platform rejecting
 the content marks that channel failed, with the reason, while the rest still go
